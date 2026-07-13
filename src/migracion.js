@@ -84,3 +84,45 @@ function setupIt0() {
   console.log(salida);
   return salida;
 }
+
+/**
+ * Inspección READ-ONLY de las pestañas legacy_* (It 1, paso canónico).
+ * No escribe nada. Por cada pestaña legacy: headers, conteo de filas de
+ * datos y hasta 5 filas de muestra. Corré desde el editor y pegame el log.
+ */
+function inspeccionarLegacy() {
+  var ss = SpreadsheetApp.openById(getSheetId_());
+  var out = [];
+
+  ss.getSheets().forEach(function (h) {
+    var nombre = h.getName();
+    if (nombre.indexOf('legacy_') !== 0) return;
+
+    out.push('===== ' + nombre + ' =====');
+    var lastRow = h.getLastRow();
+    var lastCol = h.getLastColumn();
+    if (lastRow < 1 || lastCol < 1) {
+      out.push('(vacía)');
+      out.push('');
+      return;
+    }
+
+    var headers = h.getRange(1, 1, 1, lastCol).getValues()[0];
+    out.push('Headers (' + lastCol + '): ' + headers.join(' | '));
+    out.push('Filas de datos: ' + (lastRow - 1));
+
+    var n = Math.min(5, lastRow - 1);
+    if (n > 0) {
+      var muestra = h.getRange(2, 1, n, lastCol).getValues();
+      muestra.forEach(function (fila, i) {
+        var celdas = fila.map(function (v) { return String(v); });
+        out.push('  fila ' + (i + 1) + ': ' + celdas.join(' | '));
+      });
+    }
+    out.push('');
+  });
+
+  var salida = out.join('\n');
+  console.log(salida);
+  return salida;
+}
