@@ -1,0 +1,13 @@
+# clasp / Apps Script (credenciales OAuth locales)
+.clasprc.json
+
+# Node
+node_modules/
+
+# Power BI (PBIP) — cache y settings locales, nunca versionar
+**/.pbi/localSettings.json
+**/.pbi/cache.abf
+
+# OS
+Thumbs.db
+.DS_Store
