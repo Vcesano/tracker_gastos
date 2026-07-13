@@ -1,0 +1,7 @@
+# Normalizar line endings: el repo guarda LF, checkout nativo por OS.
+* text=auto eol=lf
+
+# Binarios (Power BI) — nunca tocar
+*.pbip   text eol=lf
+*.abf    binary
+*.pbix   binary
