@@ -1,0 +1,24 @@
+<script>
+  // It 0: smoke test de google.script.run contra el servidor.
+  (function () {
+    'use strict';
+
+    var el = document.getElementById('ping-status');
+
+    google.script.run
+      .withSuccessHandler(function (res) {
+        if (res && res.ok) {
+          el.textContent = '✓ Conectado al servidor (' + res.data.ts + ')';
+          el.className = 'ok';
+        } else {
+          el.textContent = '✗ Respuesta inesperada del servidor';
+          el.className = 'err';
+        }
+      })
+      .withFailureHandler(function (err) {
+        el.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
+        el.className = 'err';
+      })
+      .ping();
+  })();
+</script>
