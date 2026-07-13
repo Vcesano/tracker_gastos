@@ -126,3 +126,92 @@ function inspeccionarLegacy() {
   console.log(salida);
   return salida;
 }
+
+/** Devuelve {header: indiceColumna} a partir de la fila de headers. */
+function indexar_(headers) {
+  var idx = {};
+  headers.forEach(function (h, i) { idx[String(h).trim()] = i; });
+  return idx;
+}
+
+/** Fecha ISO yyyy-MM-dd si es Date; si no, el valor tal cual como texto. */
+function fechaISO_(v) {
+  if (Object.prototype.toString.call(v) === '[object Date]') {
+    return Utilities.formatDate(v, 'America/Argentina/Tucuman', 'yyyy-MM-dd');
+  }
+  return String(v);
+}
+
+/** Lee una pestaña legacy como {headers, idx, rows}. */
+function leerLegacy_(ss, nombre) {
+  var h = ss.getSheetByName(nombre);
+  var lr = h.getLastRow(), lc = h.getLastColumn();
+  var headers = h.getRange(1, 1, 1, lc).getValues()[0];
+  var rows = lr > 1 ? h.getRange(2, 1, lr - 1, lc).getValues() : [];
+  return { headers: headers, idx: indexar_(headers), rows: rows };
+}
+
+/**
+ * Inspección READ-ONLY dirigida al mapeo de It 1. No escribe nada.
+ * Vuelca: (A) las 28 compras de crédito con cuotas_previas ya calculado,
+ * (B) el catálogo completo de categorías, (C) muestra de pagos de cuota
+ * reales (filas de Gastos con ID_Credito_Enlazado). Corré y pegame el log.
+ */
+function inspeccionarParaMapeo() {
+  var ss = SpreadsheetApp.openById(getSheetId_());
+  var out = [];
+
+  var gastos = leerLegacy_(ss, 'legacy_Gastos');
+  var gEnlace = gastos.idx['ID_Credito_Enlazado'];
+
+  // Contar pagos vinculados por compra (para cuotas_previas)
+  var pagosPorCompra = {};
+  gastos.rows.forEach(function (r) {
+    var link = String(r[gEnlace] || '').trim();
+    if (link) pagosPorCompra[link] = (pagosPorCompra[link] || 0) + 1;
+  });
+
+  // (A) Compras de crédito completas
+  var cc = leerLegacy_(ss, 'legacy_Consumos_Credito');
+  var c = cc.idx;
+  out.push('##### (A) CONSUMOS_CREDITO (' + cc.rows.length + ')');
+  out.push('# ID | Fecha | Descripcion | Monto_Total | Cuotas_Total | Cuotas_Pagadas | pagos_en_Gastos | cuotas_previas_calc | mp | Notas');
+  cc.rows.forEach(function (r) {
+    var id = String(r[c['ID']]);
+    var pagados = Number(r[c['Cuotas_Pagadas']]) || 0;
+    var enlazados = pagosPorCompra[id] || 0;
+    var previas = Math.max(0, pagados - enlazados);
+    out.push([
+      'A', id, fechaISO_(r[c['Fecha']]), r[c['Descripcion']], r[c['Monto_Total']],
+      r[c['Cuotas_Total']], pagados, enlazados, previas,
+      r[c['ID_Entidad_Metodo_de_Pago']], r[c['Notas']]
+    ].join(' | '));
+  });
+  out.push('');
+
+  // (B) Catálogo de categorías
+  var cat = leerLegacy_(ss, 'legacy_Lista_Tipo_de_Gasto');
+  var k = cat.idx;
+  out.push('##### (B) CATEGORIAS (' + cat.rows.length + ')');
+  out.push('# ID | Tipo | Categoria | Subcategoria');
+  cat.rows.forEach(function (r) {
+    out.push(['B', r[k['ID']], r[k['Tipo_de_Gasto']], r[k['Categoria']], r[k['Subcategoria']]].join(' | '));
+  });
+  out.push('');
+
+  // (C) Muestra de pagos de cuota (Gastos con ID_Credito_Enlazado), hasta 25
+  var g = gastos.idx;
+  var pagos = gastos.rows.filter(function (r) { return String(r[gEnlace] || '').trim(); });
+  out.push('##### (C) PAGOS DE CUOTA en legacy_Gastos (total ' + pagos.length + ', muestra 25)');
+  out.push('# compra_enlazada | Fecha | Descripcion | Monto | categoria_id | mp');
+  pagos.slice(0, 25).forEach(function (r) {
+    out.push([
+      'C', r[gEnlace], fechaISO_(r[g['Fecha']]), r[g['Descripcion']], r[g['Monto']],
+      r[g['ID_Subcategoria_Tipo_de_Gasto']], r[g['ID_Entidad_Metodo_de_Pago']]
+    ].join(' | '));
+  });
+
+  var salida = out.join('\n');
+  console.log(salida);
+  return salida;
+}
