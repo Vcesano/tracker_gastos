@@ -226,11 +226,42 @@ function nroCuotaDeDescripcion_(desc) {
 }
 
 /**
+ * Genera un id opaco de 8 hex (estilo "035ef75a") DETERMINÍSTICO a partir de
+ * un `seed` (el id legacy). Mismo seed → mismo id entre corridas: la migración
+ * sigue siendo re-ejecutable sin romper referencias. `usados` es el set global
+ * de ids ya asignados; ante colisión (rarísimo) alarga el id un carácter.
+ */
+function hash8_(seed, usados) {
+  var raw = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, String(seed), Utilities.Charset.UTF_8);
+  var hex = raw.map(function (b) {
+    var v = (b & 0xff).toString(16);
+    return v.length === 1 ? '0' + v : v;
+  }).join('');
+  var len = 8, id = hex.slice(0, len);
+  while (usados[id]) { len++; id = hex.slice(0, len); }
+  usados[id] = true;
+  return id;
+}
+
+/**
+ * Id ALEATORIO de 8 hex para altas nuevas desde la app (mismo estilo que los
+ * ids migrados, pero no determinístico). Se refactoriza a db.js en el ABM.
+ */
+function nuevoId_() {
+  return Utilities.getUuid().replace(/-/g, '').slice(0, 8);
+}
+
+/**
  * MIGRACIÓN It 1 — reconstruye las 4 pestañas operacionales desde legacy_*.
  *
  * RE-EJECUTABLE: trunca las tablas nuevas (deja headers) y las regenera. En el
  * cutover se re-copian las pestañas frescas a legacy_* y se corre de nuevo.
  * NO toca las pestañas legacy_ (solo lectura). Escritura en batch, con lock.
+ *
+ * IDs: MediosPago y Categorias reciben un id nuevo de 8-hex (hash8_, estable
+ * por hash del id legacy) y se remapean todas las FKs. ComprasCredito y Gastos
+ * conservan su id (ya son uuid corto). Así todas las tablas quedan con ids del
+ * mismo estilo opaco (035ef75a) sin romper relaciones ni el re-run.
  *
  * Mapeo (aprobado por Valentin, ver CATEGORIA_POR_COMPRA y CATEGORIAS_NUEVAS):
  *  - MediosPago  ← legacy_Lista_Metodo_de_Pago (activo=TRUE).
@@ -253,49 +284,63 @@ function migrar() {
     var rep = [];
     var ahora = Utilities.formatDate(new Date(), 'America/Argentina/Tucuman', "yyyy-MM-dd'T'HH:mm:ss");
 
-    // ---------- MediosPago ----------
+    // ---------- Lecturas legacy ----------
     var mp = leerLegacy_(ss, 'legacy_Lista_Metodo_de_Pago');
-    var m = mp.idx;
+    var cat = leerLegacy_(ss, 'legacy_Lista_Tipo_de_Gasto');
+    var cc = leerLegacy_(ss, 'legacy_Consumos_Credito');
+    var gastos = leerLegacy_(ss, 'legacy_Gastos');
+    var m = mp.idx, k = cat.idx, c = cc.idx, g = gastos.idx;
+    var gEnlace = g['ID_Credito_Enlazado'];
+
+    // ids que se CONSERVAN (ComprasCredito y Gastos ya usan uuid corto estilo
+    // 035ef75a). Se siembran en idsUsados para que los ids nuevos generados
+    // para las dimensiones no colisionen con ellos.
+    var idsUsados = {};
+    cc.rows.forEach(function (r) { var id = String(r[c['ID']]).trim(); if (id) idsUsados[id] = true; });
+    gastos.rows.forEach(function (r) { var id = String(r[g['ID']]).trim(); if (id) idsUsados[id] = true; });
+
+    // ---------- MediosPago (id nuevo 8-hex, estable por hash del id legacy) ----------
     var mediosOut = [];
-    var medioIds = {};
+    var medioIds = {};   // set de ids NUEVOS (para validar fks)
+    var medioMap = {};   // id legacy (mp-XXX / uuid) -> id nuevo
     mp.rows.forEach(function (r) {
-      var id = String(r[m['ID']]).trim();
-      if (!id) return;
-      medioIds[id] = true;
-      mediosOut.push([id, String(r[m['Metodo_de_Pago']]).trim(), String(r[m['Entidad']]).trim(), true]);
+      var legacyId = String(r[m['ID']]).trim();
+      if (!legacyId) return;
+      var nid = hash8_(legacyId, idsUsados);
+      medioMap[legacyId] = nid;
+      medioIds[nid] = true;
+      mediosOut.push([nid, String(r[m['Metodo_de_Pago']]).trim(), String(r[m['Entidad']]).trim(), true]);
     });
 
-    // ---------- Categorias (1:1 + renombres + nuevas) ----------
-    var cat = leerLegacy_(ss, 'legacy_Lista_Tipo_de_Gasto');
-    var k = cat.idx;
+    // ---------- Categorias (id nuevo 8-hex; 1:1 + renombres + nuevas) ----------
     var catsOut = [];
-    var catIds = {};
+    var catIds = {};     // set de ids NUEVOS
+    var catMap = {};     // id legacy (tg-XXX / uuid / nc-*) -> id nuevo
     cat.rows.forEach(function (r) {
-      var id = String(r[k['ID']]).trim();
-      if (!id) return;
+      var legacyId = String(r[k['ID']]).trim();
+      if (!legacyId) return;
       var sub = String(r[k['Subcategoria']]);
-      if (RENOMBRES_SUBCATEGORIA[id]) sub = RENOMBRES_SUBCATEGORIA[id];
-      catIds[id] = true;
-      catsOut.push([id, String(r[k['Tipo_de_Gasto']]), String(r[k['Categoria']]), sub, true]);
+      if (RENOMBRES_SUBCATEGORIA[legacyId]) sub = RENOMBRES_SUBCATEGORIA[legacyId];
+      var nid = hash8_(legacyId, idsUsados);
+      catMap[legacyId] = nid;
+      catIds[nid] = true;
+      catsOut.push([nid, String(r[k['Tipo_de_Gasto']]), String(r[k['Categoria']]), sub, true]);
     });
-    CATEGORIAS_NUEVAS.forEach(function (c) {
-      catIds[c.id] = true;
-      catsOut.push([c.id, c.tipo, c.categoria, c.subcategoria, true]);
+    CATEGORIAS_NUEVAS.forEach(function (cn) {
+      var nid = hash8_(cn.id, idsUsados);   // seed = slug estable ("nc-...")
+      catMap[cn.id] = nid;
+      catIds[nid] = true;
+      catsOut.push([nid, cn.tipo, cn.categoria, cn.subcategoria, true]);
     });
 
     // ---------- Contar pagos vinculados por compra (para cuotas_previas) ----------
-    var gastos = leerLegacy_(ss, 'legacy_Gastos');
-    var g = gastos.idx;
-    var gEnlace = g['ID_Credito_Enlazado'];
     var pagosPorCompra = {};
     gastos.rows.forEach(function (r) {
       var link = String(r[gEnlace] || '').trim();
       if (link) pagosPorCompra[link] = (pagosPorCompra[link] || 0) + 1;
     });
 
-    // ---------- ComprasCredito ----------
-    var cc = leerLegacy_(ss, 'legacy_Consumos_Credito');
-    var c = cc.idx;
+    // ---------- ComprasCredito (id conservado; medio y categoria remapeados) ----------
     var comprasOut = [];
     var compraIds = {};
     var usdCompras = [];
@@ -311,13 +356,16 @@ function migrar() {
       var pagadas = Number(r[c['Cuotas_Pagadas']]) || 0;
       var vinculados = pagosPorCompra[id] || 0;
       var previas = Math.max(0, pagadas - vinculados);
-      var categoriaId = CATEGORIA_POR_COMPRA[id] || '';
-      if (!categoriaId) comprasSinCategoria.push(id + ' (' + desc + ')');
+      var legacyMedio = String(r[c['ID_Entidad_Metodo_de_Pago']]).trim();
+      var medioId = medioMap[legacyMedio] || legacyMedio;   // remap; si no mapea queda crudo y se reporta
+      var legacyCat = CATEGORIA_POR_COMPRA[id] || '';
+      var categoriaId = catMap[legacyCat] || legacyCat;
+      if (!legacyCat) comprasSinCategoria.push(id + ' (' + desc + ')');
       if (moneda === 'USD') usdCompras.push(id + ' | ' + desc + ' | ' + numero_(r[c['Monto_Total']]));
       if (previas > 0) previasList.push(id + ' | ' + desc + ' | previas=' + previas + ' (pagadas=' + pagadas + ', vinculados=' + vinculados + ')');
       compraIds[id] = true;
       comprasOut.push([
-        id, fechaISO_(r[c['Fecha']]), desc, String(r[c['ID_Entidad_Metodo_de_Pago']]).trim(),
+        id, fechaISO_(r[c['Fecha']]), desc, medioId,
         categoriaId, numero_(r[c['Monto_Total']]), Number(r[c['Cuotas_Total']]) || '',
         moneda, previas, notas
       ]);
@@ -356,15 +404,17 @@ function migrar() {
       var id = String(r[g['ID']]).trim();
       if (!id) { gastosSalteados++; return; }
       var desc = String(r[g['Descripcion']] || '');
-      var categoriaId = String(r[g['ID_Subcategoria_Tipo_de_Gasto']]).trim();
-      var medioId = String(r[g['ID_Entidad_Metodo_de_Pago']]).trim();
+      var legacyCat = String(r[g['ID_Subcategoria_Tipo_de_Gasto']]).trim();
+      var legacyMedio = String(r[g['ID_Entidad_Metodo_de_Pago']]).trim();
+      var categoriaId = catMap[legacyCat] || legacyCat;     // remap a id nuevo
+      var medioId = medioMap[legacyMedio] || legacyMedio;
       var compraId = String(r[gEnlace] || '').trim();
       var nroCuota = compraId ? (nroCuotaPorFila[i] || '') : '';
       var moneda = detectarUSD_(desc) ? 'USD' : 'ARS';
       if (moneda === 'USD') usdGastos.push(id + ' | ' + desc);
-      // Validación de fks (reporta, no bloquea)
-      if (categoriaId && !catIds[categoriaId]) orphCat.push(id + ' → categoria_id=' + categoriaId);
-      if (medioId && !medioIds[medioId]) orphMedio.push(id + ' → medio_pago_id=' + medioId);
+      // Validación de fks (reporta el id legacy que no mapeó, no bloquea)
+      if (legacyCat && !catMap[legacyCat]) orphCat.push(id + ' → categoria_id(legacy)=' + legacyCat);
+      if (legacyMedio && !medioMap[legacyMedio]) orphMedio.push(id + ' → medio_pago_id(legacy)=' + legacyMedio);
       if (compraId && !compraIds[compraId]) orphCompra.push(id + ' → compra_credito_id="' + compraId + '"');
       gastosOut.push([
         id, fechaISO_(r[g['Fecha']]), desc, categoriaId, medioId,
@@ -392,6 +442,7 @@ function migrar() {
     rep.push('  Categorias:     ' + catsOut.length + ' (' + cat.rows.length + ' legacy + ' + CATEGORIAS_NUEVAS.length + ' nuevas)');
     rep.push('  ComprasCredito: ' + comprasOut.length + '  (salteadas por ID vacío: ' + comprasSalteadas + ')');
     rep.push('  Gastos:         ' + gastosOut.length + '  (salteados por ID vacío: ' + gastosSalteados + ')');
+    rep.push('IDs de MediosPago y Categorias regenerados a 8-hex; FKs remapeadas. ComprasCredito y Gastos conservan su id.');
     rep.push('');
     rep.push('Compras en USD (' + usdCompras.length + '):');
     usdCompras.forEach(function (s) { rep.push('  ' + s); });
