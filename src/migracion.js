@@ -19,6 +19,64 @@ var SCHEMA = {
 };
 
 /**
+ * Categorías NUEVAS que no existen en legacy (decididas con Valentin en It 1).
+ * IDs sintéticos ESTABLES (no uuid) para que la migración sea re-ejecutable y
+ * los categoria_id de ComprasCredito sigan siendo válidos entre corridas.
+ * Todas tipo "Diario" (gasto corriente).
+ */
+var CATEGORIAS_NUEVAS = [
+  { id: 'nc-skincare',                tipo: 'Diario', categoria: 'Compras', subcategoria: 'Skincare' },
+  { id: 'nc-libros',                  tipo: 'Diario', categoria: 'Compras', subcategoria: 'Libros' },
+  { id: 'nc-viajes-estadia',          tipo: 'Diario', categoria: 'Viajes',  subcategoria: 'Estadia' },
+  { id: 'nc-viajes-transporte',       tipo: 'Diario', categoria: 'Viajes',  subcategoria: 'Transporte' },
+  { id: 'nc-viajes-entretenimiento',  tipo: 'Diario', categoria: 'Viajes',  subcategoria: 'Entretenimiento' },
+  { id: 'nc-viajes-otros',            tipo: 'Diario', categoria: 'Viajes',  subcategoria: 'Otros' },
+  { id: 'nc-otro-suscripciones',      tipo: 'Diario', categoria: 'Otro',    subcategoria: 'Suscripciones' }
+];
+
+/**
+ * Renombres de subcategoría sobre categorías legacy (id conservado, cambia la
+ * etiqueta). Decidido con Valentin: "Ropa" → "Ropa-Indumentaria".
+ */
+var RENOMBRES_SUBCATEGORIA = {
+  'tg-008': 'Ropa-Indumentaria'
+};
+
+/**
+ * Asignación de categoría por compra de crédito (dato NUEVO: no existe en
+ * legacy). Aprobado por Valentin en It 1. compra_id → categoria_id.
+ * Las cuotas de cada compra heredan esta categoría en el análisis (Power BI),
+ * en vez de caer todas en la genérica "Credito".
+ */
+var CATEGORIA_POR_COMPRA = {
+  '5ca1f825': 'nc-skincare',               // Farmaonline
+  'c7f7d71a': 'tg-008',                    // Anteojos de sol → Ropa-Indumentaria
+  'ec252c28': 'nc-viajes-transporte',      // Pasaje Tuc-Baires
+  'f42cfb8f': 'tg-008',                    // Chanclas puma
+  '522418a9': 'tg-010',                    // Cafetera → Electronica
+  '1fe58e2d': 'tg-003',                    // Worms Steam → Ocio>Otro
+  '42432a84': 'tg-011',                    // Cafe molido → Comestibles-Bebidas
+  '07e6b04f': 'nc-viajes-entretenimiento', // Entradas oktober fedt
+  'c88dcd73': 'nc-libros',                 // Libro Make Time
+  '3df0d8fb': 'nc-viajes-transporte',      // Pago 2da parte buzios
+  '364cf1c7': 'nc-viajes-estadia',         // Hotel san javier
+  '5f0cf37d': 'nc-viajes-estadia',         // Noche Hotel Rio
+  '75407fbb': 'tg-002',                    // Guantes Venum Kick → Ocio>Kickboxing
+  '2465dbe0': 'nc-viajes-estadia',         // Noche Hotel Rio Ida - Andi
+  '346b1bd3': 'tg-028',                    // Entrad Tan Bionica
+  '4b2be2f6': 'nc-viajes-entretenimiento', // Fiesta Buzios
+  '322a5f23': 'tg-012',                    // Regalo Machi
+  'ae46bf52': 'tg-012',                    // Regalo cumple andi
+  'c3dd6eb2': 'tg-028',                    // Entrada fundamentalistas del aire
+  '8c453fc6': 'nc-otro-suscripciones',     // Suscripcion Claude
+  '555db081': 'nc-skincare',               // skin care
+  '524e0ee9': 'tg-012',                    // regalo maxi y catu
+  '3c7bb1b2': 'tg-008',                    // buzos old mon
+  '82b8e3f2': 'tg-028',                    // Entradas LPDA
+  'f4e36c48': 'tg-008'                     // Zapas Adidas
+};
+
+/**
  * Lee el SHEET_ID de Script Properties (la COPIA de trabajo).
  * Nunca hardcodear el id. Se refactoriza a db.js en It 1.
  */
@@ -140,6 +198,237 @@ function fechaISO_(v) {
     return Utilities.formatDate(v, 'America/Argentina/Tucuman', 'yyyy-MM-dd');
   }
   return String(v);
+}
+
+/**
+ * Normaliza un monto a número. Si ya es number, lo devuelve. Si es texto,
+ * maneja decimal con coma (es-AR) y separador de miles. Si no parsea, devuelve
+ * el valor original (para que la validación lo marque en el reporte).
+ */
+function numero_(v) {
+  if (typeof v === 'number') return v;
+  var s = String(v).trim();
+  if (!s) return '';
+  if (s.indexOf(',') >= 0) s = s.replace(/\./g, '').replace(',', '.');
+  var n = parseFloat(s);
+  return isNaN(n) ? v : n;
+}
+
+/** true si el texto tiene indicio de USD (USD, u$s, dolar/dólar). */
+function detectarUSD_(texto) {
+  return /\b(usd|u\$s|d[oó]lares?|d[oó]lar)\b/i.test(String(texto || ''));
+}
+
+/** Extrae N de "cuota N" en una descripción; null si no matchea. */
+function nroCuotaDeDescripcion_(desc) {
+  var m = /cuota\s*(\d+)/i.exec(String(desc || ''));
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * MIGRACIÓN It 1 — reconstruye las 4 pestañas operacionales desde legacy_*.
+ *
+ * RE-EJECUTABLE: trunca las tablas nuevas (deja headers) y las regenera. En el
+ * cutover se re-copian las pestañas frescas a legacy_* y se corre de nuevo.
+ * NO toca las pestañas legacy_ (solo lectura). Escritura en batch, con lock.
+ *
+ * Mapeo (aprobado por Valentin, ver CATEGORIA_POR_COMPRA y CATEGORIAS_NUEVAS):
+ *  - MediosPago  ← legacy_Lista_Metodo_de_Pago (activo=TRUE).
+ *  - Categorias  ← legacy_Lista_Tipo_de_Gasto 1:1 + renombres + categorías nuevas.
+ *  - ComprasCredito ← legacy_Consumos_Credito; categoria_id asignada por compra;
+ *    moneda USD si notas/desc lo indican; cuotas_previas = max(0, pagadas − pagos vinculados).
+ *  - Gastos ← legacy_Gastos; categoria_id = ID_Subcategoria; medio = ID_Entidad;
+ *    compra_credito_id = ID_Credito_Enlazado; nro_cuota por regex "cuota N";
+ *    moneda ARS por defecto (los resúmenes se pagan en pesos).
+ *
+ * Devuelve un REPORTE (no escribe nada roto): conteos, USD detectados, fks
+ * huérfanas, filas salteadas y compras con cuotas_previas > 0.
+ * Corré desde el editor (migrar → Run) y pegame el log.
+ */
+function migrar() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error('No se pudo tomar el lock (otra ejecución en curso).');
+  try {
+    var ss = SpreadsheetApp.openById(getSheetId_());
+    var rep = [];
+    var ahora = Utilities.formatDate(new Date(), 'America/Argentina/Tucuman', "yyyy-MM-dd'T'HH:mm:ss");
+
+    // ---------- MediosPago ----------
+    var mp = leerLegacy_(ss, 'legacy_Lista_Metodo_de_Pago');
+    var m = mp.idx;
+    var mediosOut = [];
+    var medioIds = {};
+    mp.rows.forEach(function (r) {
+      var id = String(r[m['ID']]).trim();
+      if (!id) return;
+      medioIds[id] = true;
+      mediosOut.push([id, String(r[m['Metodo_de_Pago']]).trim(), String(r[m['Entidad']]).trim(), true]);
+    });
+
+    // ---------- Categorias (1:1 + renombres + nuevas) ----------
+    var cat = leerLegacy_(ss, 'legacy_Lista_Tipo_de_Gasto');
+    var k = cat.idx;
+    var catsOut = [];
+    var catIds = {};
+    cat.rows.forEach(function (r) {
+      var id = String(r[k['ID']]).trim();
+      if (!id) return;
+      var sub = String(r[k['Subcategoria']]);
+      if (RENOMBRES_SUBCATEGORIA[id]) sub = RENOMBRES_SUBCATEGORIA[id];
+      catIds[id] = true;
+      catsOut.push([id, String(r[k['Tipo_de_Gasto']]), String(r[k['Categoria']]), sub, true]);
+    });
+    CATEGORIAS_NUEVAS.forEach(function (c) {
+      catIds[c.id] = true;
+      catsOut.push([c.id, c.tipo, c.categoria, c.subcategoria, true]);
+    });
+
+    // ---------- Contar pagos vinculados por compra (para cuotas_previas) ----------
+    var gastos = leerLegacy_(ss, 'legacy_Gastos');
+    var g = gastos.idx;
+    var gEnlace = g['ID_Credito_Enlazado'];
+    var pagosPorCompra = {};
+    gastos.rows.forEach(function (r) {
+      var link = String(r[gEnlace] || '').trim();
+      if (link) pagosPorCompra[link] = (pagosPorCompra[link] || 0) + 1;
+    });
+
+    // ---------- ComprasCredito ----------
+    var cc = leerLegacy_(ss, 'legacy_Consumos_Credito');
+    var c = cc.idx;
+    var comprasOut = [];
+    var compraIds = {};
+    var usdCompras = [];
+    var previasList = [];
+    var comprasSinCategoria = [];
+    var comprasSalteadas = 0;
+    cc.rows.forEach(function (r) {
+      var id = String(r[c['ID']]).trim();
+      if (!id) { comprasSalteadas++; return; }
+      var notas = String(r[c['Notas']] || '');
+      var desc = String(r[c['Descripcion']] || '');
+      var moneda = detectarUSD_(notas + ' ' + desc) ? 'USD' : 'ARS';
+      var pagadas = Number(r[c['Cuotas_Pagadas']]) || 0;
+      var vinculados = pagosPorCompra[id] || 0;
+      var previas = Math.max(0, pagadas - vinculados);
+      var categoriaId = CATEGORIA_POR_COMPRA[id] || '';
+      if (!categoriaId) comprasSinCategoria.push(id + ' (' + desc + ')');
+      if (moneda === 'USD') usdCompras.push(id + ' | ' + desc + ' | ' + numero_(r[c['Monto_Total']]));
+      if (previas > 0) previasList.push(id + ' | ' + desc + ' | previas=' + previas + ' (pagadas=' + pagadas + ', vinculados=' + vinculados + ')');
+      compraIds[id] = true;
+      comprasOut.push([
+        id, fechaISO_(r[c['Fecha']]), desc, String(r[c['ID_Entidad_Metodo_de_Pago']]).trim(),
+        categoriaId, numero_(r[c['Monto_Total']]), Number(r[c['Cuotas_Total']]) || '',
+        moneda, previas, notas
+      ]);
+    });
+
+    // ---------- Gastos ----------
+    // nro_cuota: regex "cuota N"; para los que no matchean, relleno secuencial
+    // por fecha dentro de cada compra (huecos 1..N no usados).
+    var pagosDeCompra = {}; // compraId -> [{i, fecha, regexN}]
+    gastos.rows.forEach(function (r, i) {
+      var link = String(r[gEnlace] || '').trim();
+      if (!link) return;
+      (pagosDeCompra[link] = pagosDeCompra[link] || []).push({
+        i: i, fecha: fechaISO_(r[g['Fecha']]), regexN: nroCuotaDeDescripcion_(r[g['Descripcion']])
+      });
+    });
+    var nroCuotaPorFila = {}; // indice de fila legacy -> nro_cuota
+    Object.keys(pagosDeCompra).forEach(function (link) {
+      var arr = pagosDeCompra[link].slice().sort(function (a, b) { return a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0; });
+      var usados = {};
+      arr.forEach(function (p) { if (p.regexN) usados[p.regexN] = true; });
+      var next = 1;
+      arr.forEach(function (p) {
+        if (p.regexN) { nroCuotaPorFila[p.i] = p.regexN; return; }
+        while (usados[next]) next++;
+        usados[next] = true;
+        nroCuotaPorFila[p.i] = next;
+      });
+    });
+
+    var gastosOut = [];
+    var gastosSalteados = 0;
+    var usdGastos = [];
+    var orphCat = [], orphMedio = [], orphCompra = [];
+    gastos.rows.forEach(function (r, i) {
+      var id = String(r[g['ID']]).trim();
+      if (!id) { gastosSalteados++; return; }
+      var desc = String(r[g['Descripcion']] || '');
+      var categoriaId = String(r[g['ID_Subcategoria_Tipo_de_Gasto']]).trim();
+      var medioId = String(r[g['ID_Entidad_Metodo_de_Pago']]).trim();
+      var compraId = String(r[gEnlace] || '').trim();
+      var nroCuota = compraId ? (nroCuotaPorFila[i] || '') : '';
+      var moneda = detectarUSD_(desc) ? 'USD' : 'ARS';
+      if (moneda === 'USD') usdGastos.push(id + ' | ' + desc);
+      // Validación de fks (reporta, no bloquea)
+      if (categoriaId && !catIds[categoriaId]) orphCat.push(id + ' → categoria_id=' + categoriaId);
+      if (medioId && !medioIds[medioId]) orphMedio.push(id + ' → medio_pago_id=' + medioId);
+      if (compraId && !compraIds[compraId]) orphCompra.push(id + ' → compra_credito_id="' + compraId + '"');
+      gastosOut.push([
+        id, fechaISO_(r[g['Fecha']]), desc, categoriaId, medioId,
+        numero_(r[g['Monto']]), moneda, compraId, nroCuota, ahora
+      ]);
+    });
+
+    // Validación de fks en ComprasCredito
+    var orphCompraMedio = [], orphCompraCat = [];
+    comprasOut.forEach(function (row) {
+      if (row[3] && !medioIds[row[3]]) orphCompraMedio.push(row[0] + ' → medio_pago_id=' + row[3]);
+      if (row[4] && !catIds[row[4]]) orphCompraCat.push(row[0] + ' → categoria_id=' + row[4]);
+    });
+
+    // ---------- Escritura batch (truncate + setValues) ----------
+    escribirTabla_(ss, 'MediosPago', mediosOut);
+    escribirTabla_(ss, 'Categorias', catsOut);
+    escribirTabla_(ss, 'ComprasCredito', comprasOut);
+    escribirTabla_(ss, 'Gastos', gastosOut);
+
+    // ---------- Reporte ----------
+    rep.push('===== MIGRACIÓN OK (' + ahora + ') =====');
+    rep.push('Conteos escritos:');
+    rep.push('  MediosPago:     ' + mediosOut.length);
+    rep.push('  Categorias:     ' + catsOut.length + ' (' + cat.rows.length + ' legacy + ' + CATEGORIAS_NUEVAS.length + ' nuevas)');
+    rep.push('  ComprasCredito: ' + comprasOut.length + '  (salteadas por ID vacío: ' + comprasSalteadas + ')');
+    rep.push('  Gastos:         ' + gastosOut.length + '  (salteados por ID vacío: ' + gastosSalteados + ')');
+    rep.push('');
+    rep.push('Compras en USD (' + usdCompras.length + '):');
+    usdCompras.forEach(function (s) { rep.push('  ' + s); });
+    rep.push('');
+    rep.push('Gastos con indicio USD (default ARS igual — revisá) (' + usdGastos.length + '):');
+    usdGastos.forEach(function (s) { rep.push('  ' + s); });
+    rep.push('');
+    rep.push('Compras con cuotas_previas > 0 (' + previasList.length + '):');
+    previasList.forEach(function (s) { rep.push('  ' + s); });
+    rep.push('');
+    rep.push('--- FKs huérfanas (a revisar) ---');
+    rep.push('Gastos.categoria_id inexistente (' + orphCat.length + '): ' + (orphCat.join('  |  ') || 'ninguna'));
+    rep.push('Gastos.medio_pago_id inexistente (' + orphMedio.length + '): ' + (orphMedio.join('  |  ') || 'ninguna'));
+    rep.push('Gastos.compra_credito_id inexistente (' + orphCompra.length + '): ' + (orphCompra.join('  |  ') || 'ninguna'));
+    rep.push('ComprasCredito.medio_pago_id inexistente (' + orphCompraMedio.length + '): ' + (orphCompraMedio.join('  |  ') || 'ninguna'));
+    rep.push('ComprasCredito.categoria_id inexistente (' + orphCompraCat.length + '): ' + (orphCompraCat.join('  |  ') || 'ninguna'));
+    rep.push('Compras sin categoría asignada (' + comprasSinCategoria.length + '): ' + (comprasSinCategoria.join('  |  ') || 'ninguna'));
+
+    var salida = rep.join('\n');
+    console.log(salida);
+    return salida;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Trunca los datos de una pestaña operacional (deja la fila 1 de headers) y
+ * escribe `filas` en batch. `filas` = array de arrays en el orden de SCHEMA.
+ */
+function escribirTabla_(ss, nombre, filas) {
+  var hoja = ss.getSheetByName(nombre);
+  if (!hoja) throw new Error('Falta la pestaña "' + nombre + '" (corré setupIt0 primero).');
+  var headers = SCHEMA[nombre];
+  var lastRow = hoja.getLastRow();
+  if (lastRow > 1) hoja.getRange(2, 1, lastRow - 1, headers.length).clearContent();
+  if (filas.length) hoja.getRange(2, 1, filas.length, headers.length).setValues(filas);
 }
 
 /** Lee una pestaña legacy como {headers, idx, rows}. */
