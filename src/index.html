@@ -74,23 +74,35 @@
           </label>
 
           <button type="submit" id="f-submit" class="btn">Guardar gasto</button>
+          <button type="button" id="f-limpiar" class="btn-sec">Limpiar</button>
         </form>
       </section>
 
       <!-- ===== Vista: Historial ===== -->
       <section class="card view" id="historial-card" data-view="historial" hidden>
-        <h2 class="card-title">Historial</h2>
+        <div class="hist-head">
+          <h2 class="card-title">Historial</h2>
+          <button type="button" id="h-limpiar" class="link">Limpiar filtros</button>
+        </div>
         <div class="filtros">
           <label class="field">
-            <span>Mes</span>
-            <select id="h-mes"></select>
+            <span>Desde</span>
+            <input type="date" id="h-desde">
+          </label>
+          <label class="field">
+            <span>Hasta</span>
+            <input type="date" id="h-hasta">
           </label>
           <label class="field">
             <span>Categoría</span>
             <select id="h-categoria"></select>
           </label>
           <label class="field">
-            <span>Medio</span>
+            <span>Subcategoría</span>
+            <select id="h-subcategoria" disabled></select>
+          </label>
+          <label class="field">
+            <span>Medio de pago</span>
             <select id="h-medio"></select>
           </label>
         </div>

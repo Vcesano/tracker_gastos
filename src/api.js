@@ -127,50 +127,45 @@ function crearGasto(payload) {
 
 /**
  * Lista gastos con etiquetas (categoría y medio dereferenciados) y filtros
- * opcionales. `filtros` = { mes:'YYYY-MM', categoria_id, medio_pago_id } (todos
- * opcionales). Devuelve { gastos:[...], meses:['YYYY-MM'...] } donde `meses`
- * es el set completo (para el selector), independiente del filtro aplicado.
+ * opcionales. `filtros` = { desde:'YYYY-MM-DD', hasta:'YYYY-MM-DD', categoria,
+ * subcategoria, medio_pago_id } (todos opcionales; categoria/subcategoria son
+ * NOMBRES). Devuelve { gastos:[...] } ordenados por fecha desc.
+ *
+ * La fecha se normaliza a ISO yyyy-mm-dd (fechaISO_): Sheets suele guardar la
+ * fecha como valor Date, y al leerla vuelve como objeto — hay que uniformarla
+ * para ordenar, filtrar por rango y mostrarla bien en el cliente.
  */
 function listarGastos(filtros) {
   try {
     filtros = filtros || {};
-    var mes = String(filtros.mes || '').trim();
-    var catF = String(filtros.categoria_id || '').trim();
+    var desde = String(filtros.desde || '').trim();
+    var hasta = String(filtros.hasta || '').trim();
+    var catF = String(filtros.categoria || '').trim();
+    var subF = String(filtros.subcategoria || '').trim();
     var medF = String(filtros.medio_pago_id || '').trim();
 
-    // Etiquetas (incluye inactivos para que un gasto viejo siga resolviendo).
-    var catLabel = {};
+    // Info de categoría por id (incluye inactivas para que un gasto viejo resuelva).
+    var catInfo = {};
     leerTabla_('Categorias').forEach(function (c) {
-      var lbl = String(c.categoria || '');
-      if (String(c.subcategoria || '').trim()) lbl += ' › ' + String(c.subcategoria).trim();
-      catLabel[String(c.id)] = lbl;
+      var sub = String(c.subcategoria || '').trim();
+      var cat = String(c.categoria || '');
+      catInfo[String(c.id)] = { categoria: cat, subcategoria: sub, label: cat + (sub ? ' › ' + sub : '') };
     });
     var medLabel = {};
     leerTabla_('MediosPago').forEach(function (m) { medLabel[String(m.id)] = String(m.entidad || ''); });
 
-    var todos = leerTabla_('Gastos');
-
-    var mesesSet = {};
-    todos.forEach(function (g) {
-      var mm = String(g.fecha || '').slice(0, 7);
-      if (/^\d{4}-\d{2}$/.test(mm)) mesesSet[mm] = true;
-    });
-    var meses = Object.keys(mesesSet).sort().reverse();
-
-    var gastos = todos.filter(function (g) {
-      if (mes && String(g.fecha || '').slice(0, 7) !== mes) return false;
-      if (catF && String(g.categoria_id || '') !== catF) return false;
-      if (medF && String(g.medio_pago_id || '') !== medF) return false;
-      return true;
-    }).map(function (g) {
+    var gastos = leerTabla_('Gastos').map(function (g) {
       var cid = String(g.categoria_id || ''), mid = String(g.medio_pago_id || '');
+      var info = catInfo[cid] || { categoria: '', subcategoria: '', label: cid };
       var nro = g.nro_cuota === '' || g.nro_cuota === null ? '' : (Number(g.nro_cuota) || '');
       return {
         id: String(g.id),
-        fecha: String(g.fecha || ''),
+        fecha: fechaISO_(g.fecha),
         descripcion: String(g.descripcion || ''),
         categoria_id: cid,
-        categoria_label: catLabel[cid] || cid,
+        categoria: info.categoria,
+        subcategoria: info.subcategoria,
+        categoria_label: info.label,
         medio_pago_id: mid,
         medio_label: medLabel[mid] || mid,
         monto: Number(g.monto) || 0,
@@ -178,14 +173,18 @@ function listarGastos(filtros) {
         es_cuota: String(g.compra_credito_id || '').trim() !== '',
         nro_cuota: nro
       };
+    }).filter(function (g) {
+      if (desde && g.fecha < desde) return false;   // ISO yyyy-mm-dd ordena cronológicamente
+      if (hasta && g.fecha > hasta) return false;
+      if (catF && g.categoria !== catF) return false;
+      if (subF && g.subcategoria !== subF) return false;
+      if (medF && g.medio_pago_id !== medF) return false;
+      return true;
     });
 
-    // Orden: fecha desc, y a igual fecha, creado_en desc (los últimos arriba).
-    gastos.sort(function (a, b) {
-      return a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0;
-    });
+    gastos.sort(function (a, b) { return a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0; });
 
-    return { ok: true, data: { gastos: gastos, meses: meses } };
+    return { ok: true, data: { gastos: gastos } };
   } catch (e) {
     return { ok: false, error: e.message };
   }

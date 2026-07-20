@@ -31,11 +31,15 @@
       moneda: $('f-moneda'),
       descripcion: $('f-descripcion'),
       submit: $('f-submit'),
+      limpiar: $('f-limpiar'),
       // historial
       histCard: $('historial-card'),
-      hMes: $('h-mes'),
+      hDesde: $('h-desde'),
+      hHasta: $('h-hasta'),
       hCategoria: $('h-categoria'),
+      hSubcategoria: $('h-subcategoria'),
       hMedio: $('h-medio'),
+      hLimpiar: $('h-limpiar'),
       histResumen: $('hist-resumen'),
       histList: $('hist-list'),
       toast: $('toast')
@@ -47,6 +51,12 @@
       var mm = String(d.getMonth() + 1).padStart(2, '0');
       var dd = String(d.getDate()).padStart(2, '0');
       return d.getFullYear() + '-' + mm + '-' + dd;
+    }
+
+    // ISO yyyy-mm-dd → dd/mm/yyyy para mostrar.
+    function fmtFecha(iso) {
+      var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso));
+      return m ? m[3] + '/' + m[2] + '/' + m[1] : String(iso);
     }
 
     function distinct(arr) {
@@ -69,7 +79,14 @@
       return (moneda ? moneda + ' ' : '') + s;
     }
 
-    // Rellena un <select> con un placeholder deshabilitado + opciones ordenadas.
+    // En muchos navegadores el calendario de un input date solo se abre desde el
+    // ícono. showPicker() lo abre al tocar cualquier parte del box.
+    function attachPicker(input) {
+      input.addEventListener('click', function () {
+        if (typeof input.showPicker === 'function') { try { input.showPicker(); } catch (e) {} }
+      });
+    }
+
     function fillSelect(sel, opciones, placeholder) {
       sel.innerHTML = '';
       var ph = document.createElement('option');
@@ -82,8 +99,8 @@
       });
     }
 
-    // Rellena un <select> de filtro: primera opción "todos" (value ''). Preserva
-    // la selección actual si sigue existiendo. `ordenar`=false mantiene el orden dado.
+    // Select de filtro: primera opción "todos" (value ''). `ordenar`=false mantiene
+    // el orden dado. Preserva la selección actual si sigue existiendo.
     function fillFiltro(sel, opciones, labelTodos, ordenar) {
       var keep = sel.value;
       sel.innerHTML = '';
@@ -131,7 +148,7 @@
       return formatMonto(String(n).replace('.', ','));
     }
 
-    // ---- Cascada Tipo → Categoría → Subcategoría ----
+    // ---- Cascada Tipo → Categoría → Subcategoría (form) ----
     function onTipoChange() {
       var tipo = el.tipo.value;
       var cats = distinct(
@@ -159,8 +176,6 @@
       if (opts.length === 1) el.medio.value = opts[0].value;
     }
 
-    // Prefill de cascadas para edición. Devuelve false si el id no está entre
-    // los activos (categoría/medio dado de baja): el usuario deberá re-elegir.
     function setCascadaCategoria(categoriaId) {
       var c = findById(categorias, categoriaId);
       if (!c) return false;
@@ -201,7 +216,7 @@
       el.formTitle.textContent = 'Editar gasto';
       el.submit.textContent = 'Guardar cambios';
       el.editBanner.hidden = false;
-      el.fecha.value = g.fecha;
+      el.fecha.value = g.fecha;   // ya viene ISO yyyy-mm-dd desde el server
       if (!setCascadaCategoria(g.categoria_id)) {
         fillSelect(el.tipo, optTipos, 'Elegí tipo…');
         toast('La categoría original está inactiva: reelegila.', '');
@@ -227,16 +242,40 @@
     }
 
     // ---- Historial ----
+    function onFiltroCategoriaChange() {
+      var cat = el.hCategoria.value;
+      var subs = distinct(
+        categorias.filter(function (c) { return c.categoria === cat && c.subcategoria; })
+                  .map(function (c) { return c.subcategoria; })
+      ).map(function (s) { return { value: s, label: s }; });
+      fillFiltro(el.hSubcategoria, subs, 'Todas las subcategorías', true);
+      el.hSubcategoria.disabled = !cat;
+      cargarHistorial();
+    }
+
+    function limpiarFiltros() {
+      el.hDesde.value = ''; el.hHasta.value = '';
+      el.hCategoria.value = '';
+      fillFiltro(el.hSubcategoria, [], 'Todas las subcategorías', true);
+      el.hSubcategoria.disabled = true;
+      el.hMedio.value = '';
+      cargarHistorial();
+    }
+
     function cargarHistorial() {
       el.histResumen.textContent = 'Cargando…';
       el.histList.innerHTML = '';
-      var filtros = { mes: el.hMes.value, categoria_id: el.hCategoria.value, medio_pago_id: el.hMedio.value };
+      var filtros = {
+        desde: el.hDesde.value,
+        hasta: el.hHasta.value,
+        categoria: el.hCategoria.value,
+        subcategoria: el.hSubcategoria.value,
+        medio_pago_id: el.hMedio.value
+      };
       google.script.run
         .withSuccessHandler(function (res) {
           if (!res || !res.ok) { el.histResumen.textContent = '✗ ' + ((res && res.error) || 'Error al listar.'); return; }
           histActuales = res.data.gastos || [];
-          var meses = (res.data.meses || []).map(function (m) { return { value: m, label: m }; });
-          fillFiltro(el.hMes, meses, 'Todos los meses', false);
           renderHistorial(histActuales);
         })
         .withFailureHandler(function (err) {
@@ -269,7 +308,7 @@
 
         var meta = document.createElement('div');
         meta.className = 'gasto-meta';
-        meta.textContent = g.fecha + ' · ' + g.categoria_label + ' · ' + g.medio_label;
+        meta.textContent = fmtFecha(g.fecha) + ' · ' + g.categoria_label + ' · ' + g.medio_label;
 
         var acc = document.createElement('div');
         acc.className = 'gasto-acciones';
@@ -341,7 +380,7 @@
 
       var editando = !!editId;
       el.submit.disabled = true;
-      el.submit.textContent = editando ? 'Guardando…' : 'Guardando…';
+      el.submit.textContent = 'Guardando…';
 
       var handler = google.script.run
         .withSuccessHandler(function (res) {
@@ -396,13 +435,14 @@
             medios.map(function (m) { return m.tipo_medio; }).filter(function (t) { return t !== 'Credito'; })
           ).map(function (t) { return { value: t, label: t }; });
 
-          // Filtros del historial (categoría y medio) — se llenan una vez.
-          var catFiltro = categorias.map(function (c) {
-            var lbl = c.categoria + (c.subcategoria ? ' › ' + c.subcategoria : '');
-            return { value: c.id, label: lbl };
-          });
+          // Filtros del historial (se llenan una vez).
+          var catFiltro = distinct(categorias.map(function (c) { return c.categoria; }))
+            .map(function (cat) { return { value: cat, label: cat }; });
           fillFiltro(el.hCategoria, catFiltro, 'Todas las categorías', true);
-          var medFiltro = medios.map(function (m) { return { value: m.id, label: m.entidad }; });
+          fillFiltro(el.hSubcategoria, [], 'Todas las subcategorías', true);
+          // Medios sin crédito: no se usan para pagar gastos.
+          var medFiltro = medios.filter(function (m) { return m.tipo_medio !== 'Credito'; })
+            .map(function (m) { return { value: m.id, label: m.entidad }; });
           fillFiltro(el.hMedio, medFiltro, 'Todos los medios', true);
 
           enterCreateMode();
@@ -423,11 +463,20 @@
     el.tipomedio.addEventListener('change', onTipoMedioChange);
     el.monto.addEventListener('input', function () { el.monto.value = formatMonto(el.monto.value); });
     el.form.addEventListener('submit', onSubmit);
+    el.limpiar.addEventListener('click', function () { enterCreateMode(); showView('form'); });
     el.editCancel.addEventListener('click', function () { enterCreateMode(); showView('form'); });
+
     el.histList.addEventListener('click', onHistClick);
-    el.hMes.addEventListener('change', cargarHistorial);
-    el.hCategoria.addEventListener('change', cargarHistorial);
+    el.hDesde.addEventListener('change', cargarHistorial);
+    el.hHasta.addEventListener('change', cargarHistorial);
+    el.hCategoria.addEventListener('change', onFiltroCategoriaChange);
+    el.hSubcategoria.addEventListener('change', cargarHistorial);
     el.hMedio.addEventListener('change', cargarHistorial);
+    el.hLimpiar.addEventListener('click', limpiarFiltros);
+
+    attachPicker(el.fecha);
+    attachPicker(el.hDesde);
+    attachPicker(el.hHasta);
 
     var tabBtns = document.querySelectorAll('.tab');
     for (var i = 0; i < tabBtns.length; i++) {
