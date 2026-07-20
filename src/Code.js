@@ -17,11 +17,3 @@ function doGet() {
 function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
-
-/**
- * Ping de humo para verificar que google.script.run funciona end-to-end.
- * Se remueve/expande cuando arranque It 1.
- */
-function ping() {
-  return { ok: true, data: { pong: true, ts: new Date().toISOString() } };
-}

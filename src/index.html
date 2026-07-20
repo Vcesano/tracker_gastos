@@ -11,10 +11,62 @@
         <h1>Gastos</h1>
       </header>
 
-      <section class="card" id="estado">
-        <p class="muted">Andamiaje It 0</p>
-        <p id="ping-status">Verificando conexión con el servidor…</p>
+      <section class="card" id="form-card" hidden>
+        <h2 class="card-title">Nuevo gasto</h2>
+        <form id="form-gasto" autocomplete="off" novalidate>
+          <label class="field">
+            <span>Fecha</span>
+            <input type="date" id="f-fecha" required>
+          </label>
+
+          <label class="field">
+            <span>Tipo</span>
+            <select id="f-tipo" required></select>
+          </label>
+
+          <label class="field">
+            <span>Categoría</span>
+            <select id="f-categoria" required disabled></select>
+          </label>
+
+          <label class="field">
+            <span>Subcategoría</span>
+            <select id="f-subcategoria" required disabled></select>
+          </label>
+
+          <label class="field">
+            <span>Medio de pago</span>
+            <select id="f-medio" required></select>
+          </label>
+
+          <div class="row">
+            <label class="field field-monto">
+              <span>Monto</span>
+              <input type="text" id="f-monto" inputmode="decimal" placeholder="0" required>
+            </label>
+            <label class="field field-moneda">
+              <span>Moneda</span>
+              <select id="f-moneda">
+                <option value="ARS" selected>ARS</option>
+                <option value="USD">USD</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Descripción <em class="opt">(opcional)</em></span>
+            <input type="text" id="f-descripcion" maxlength="140" placeholder="Ej: Súper del sábado">
+          </label>
+
+          <button type="submit" id="f-submit" class="btn">Guardar gasto</button>
+        </form>
       </section>
+
+      <section class="card" id="loading-card">
+        <p id="loading-status">Cargando catálogos…</p>
+      </section>
+
+      <div id="toast" class="toast" hidden></div>
     </main>
 
     <?!= include('app-js'); ?>

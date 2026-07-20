@@ -1,24 +1,180 @@
 <script>
-  // It 0: smoke test de google.script.run contra el servidor.
+  // It 1 (1a): carga rápida de gasto diario. Vanilla JS, sin frameworks.
   (function () {
     'use strict';
 
-    var el = document.getElementById('ping-status');
+    var $ = function (id) { return document.getElementById(id); };
+    var categorias = [];   // [{id, tipo, categoria, subcategoria}] activas
+    var medios = [];       // [{id, entidad, tipo_medio}] activos
 
-    google.script.run
-      .withSuccessHandler(function (res) {
-        if (res && res.ok) {
-          el.textContent = '✓ Conectado al servidor (' + res.data.ts + ')';
-          el.className = 'ok';
-        } else {
-          el.textContent = '✗ Respuesta inesperada del servidor';
-          el.className = 'err';
-        }
-      })
-      .withFailureHandler(function (err) {
-        el.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
-        el.className = 'err';
-      })
-      .ping();
+    var el = {
+      formCard: $('form-card'),
+      loadingCard: $('loading-card'),
+      loadingStatus: $('loading-status'),
+      form: $('form-gasto'),
+      fecha: $('f-fecha'),
+      tipo: $('f-tipo'),
+      categoria: $('f-categoria'),
+      subcategoria: $('f-subcategoria'),
+      medio: $('f-medio'),
+      monto: $('f-monto'),
+      moneda: $('f-moneda'),
+      descripcion: $('f-descripcion'),
+      submit: $('f-submit'),
+      toast: $('toast')
+    };
+
+    // ---- Utilidades ----
+    function hoyISO() {
+      var d = new Date();
+      var mm = String(d.getMonth() + 1).padStart(2, '0');
+      var dd = String(d.getDate()).padStart(2, '0');
+      return d.getFullYear() + '-' + mm + '-' + dd;
+    }
+
+    function distinct(arr) {
+      var seen = {}, out = [];
+      arr.forEach(function (v) { if (!seen[v]) { seen[v] = true; out.push(v); } });
+      return out;
+    }
+
+    function fillSelect(sel, opciones, placeholder) {
+      sel.innerHTML = '';
+      var ph = document.createElement('option');
+      ph.value = '';
+      ph.textContent = placeholder;
+      ph.disabled = true;
+      ph.selected = true;
+      sel.appendChild(ph);
+      opciones.forEach(function (o) {
+        var opt = document.createElement('option');
+        opt.value = o.value;
+        opt.textContent = o.label;
+        sel.appendChild(opt);
+      });
+    }
+
+    var toastTimer = null;
+    function toast(msg, tipo) {
+      el.toast.textContent = msg;
+      el.toast.className = 'toast ' + (tipo || '');
+      el.toast.hidden = false;
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(function () { el.toast.hidden = true; }, 3200);
+    }
+
+    // ---- Cascada Tipo → Categoría → Subcategoría ----
+    // El value de la subcategoría ES el categoria_id (cada fila de Categorias
+    // es un id único con su tipo/categoria/subcategoria).
+    function onTipoChange() {
+      var tipo = el.tipo.value;
+      var cats = distinct(
+        categorias.filter(function (c) { return c.tipo === tipo; })
+                  .map(function (c) { return c.categoria; })
+      ).map(function (cat) { return { value: cat, label: cat }; });
+      fillSelect(el.categoria, cats, 'Elegí categoría…');
+      el.categoria.disabled = false;
+      fillSelect(el.subcategoria, [], 'Elegí categoría primero…');
+      el.subcategoria.disabled = true;
+    }
+
+    function onCategoriaChange() {
+      var tipo = el.tipo.value, cat = el.categoria.value;
+      var rows = categorias.filter(function (c) {
+        return c.tipo === tipo && c.categoria === cat;
+      }).map(function (c) {
+        return { value: c.id, label: c.subcategoria || '(sin subcategoría)' };
+      });
+      fillSelect(el.subcategoria, rows, 'Elegí subcategoría…');
+      el.subcategoria.disabled = false;
+      // Si hay una sola, seleccionarla directo.
+      if (rows.length === 1) el.subcategoria.value = rows[0].value;
+    }
+
+    // ---- Carga inicial de catálogos ----
+    function cargarCatalogos() {
+      google.script.run
+        .withSuccessHandler(function (res) {
+          if (!res || !res.ok) {
+            el.loadingStatus.textContent = '✗ ' + ((res && res.error) || 'No se pudieron cargar los catálogos.');
+            el.loadingStatus.className = 'err';
+            return;
+          }
+          categorias = res.data.categorias || [];
+          medios = res.data.medios || [];
+
+          if (!categorias.length || !medios.length) {
+            el.loadingStatus.textContent = '✗ Faltan categorías o medios de pago activos en la Sheet.';
+            el.loadingStatus.className = 'err';
+            return;
+          }
+
+          // Poblar tipo y medio
+          var tipos = distinct(categorias.map(function (c) { return c.tipo; }))
+            .map(function (t) { return { value: t, label: t }; });
+          fillSelect(el.tipo, tipos, 'Elegí tipo…');
+
+          var mediosOpts = medios.map(function (m) { return { value: m.id, label: m.entidad }; });
+          fillSelect(el.medio, mediosOpts, 'Elegí medio…');
+
+          el.fecha.value = hoyISO();
+          el.loadingCard.hidden = true;
+          el.formCard.hidden = false;
+        })
+        .withFailureHandler(function (err) {
+          el.loadingStatus.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
+          el.loadingStatus.className = 'err';
+        })
+        .getCatalogos();
+    }
+
+    // ---- Submit ----
+    function onSubmit(ev) {
+      ev.preventDefault();
+
+      var monto = parseFloat(String(el.monto.value).replace(',', '.'));
+      if (!isFinite(monto) || monto <= 0) { toast('El monto debe ser mayor a 0.', 'err'); el.monto.focus(); return; }
+      if (!el.subcategoria.value) { toast('Elegí una categoría completa.', 'err'); return; }
+      if (!el.medio.value) { toast('Elegí un medio de pago.', 'err'); return; }
+
+      var payload = {
+        fecha: el.fecha.value,
+        descripcion: el.descripcion.value,
+        categoria_id: el.subcategoria.value,
+        medio_pago_id: el.medio.value,
+        monto: monto,
+        moneda: el.moneda.value
+      };
+
+      el.submit.disabled = true;
+      el.submit.textContent = 'Guardando…';
+
+      google.script.run
+        .withSuccessHandler(function (res) {
+          el.submit.disabled = false;
+          el.submit.textContent = 'Guardar gasto';
+          if (res && res.ok) {
+            toast('✓ Gasto guardado', 'ok');
+            // Reset para carga rápida: conservo fecha/tipo/categoría/medio/moneda.
+            el.monto.value = '';
+            el.descripcion.value = '';
+            el.monto.focus();
+          } else {
+            toast('✗ ' + ((res && res.error) || 'No se pudo guardar.'), 'err');
+          }
+        })
+        .withFailureHandler(function (err) {
+          el.submit.disabled = false;
+          el.submit.textContent = 'Guardar gasto';
+          toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err');
+        })
+        .crearGasto(payload);
+    }
+
+    // ---- Wire up ----
+    el.tipo.addEventListener('change', onTipoChange);
+    el.categoria.addEventListener('change', onCategoriaChange);
+    el.form.addEventListener('submit', onSubmit);
+    cargarCatalogos();
   })();
 </script>

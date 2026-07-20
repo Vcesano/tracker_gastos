@@ -2,9 +2,12 @@
   :root {
     --bg: #0f1115;
     --card: #1a1d24;
+    --field: #12151b;
+    --border: #2a2f3a;
     --text: #e7e9ee;
     --muted: #9aa0ac;
     --accent: #4c8bf5;
+    --accent-press: #3b73d1;
     --ok: #2ecc71;
     --err: #e74c3c;
     --radius: 14px;
@@ -42,8 +45,84 @@
     margin-bottom: 16px;
   }
 
-  .muted { color: var(--muted); font-size: 0.85rem; margin: 0 0 8px; }
+  .card-title {
+    font-size: 1.05rem;
+    margin: 0 0 14px;
+  }
 
+  .muted { color: var(--muted); font-size: 0.85rem; }
   .ok { color: var(--ok); }
   .err { color: var(--err); }
+
+  /* --- Form --- */
+  .field {
+    display: block;
+    margin-bottom: 14px;
+  }
+  .field > span {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .field .opt { font-style: normal; color: var(--muted); opacity: 0.7; }
+
+  input, select {
+    width: 100%;
+    font-size: 1.05rem;
+    color: var(--text);
+    background: var(--field);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 13px 12px;
+    min-height: 48px;
+    appearance: none;
+    -webkit-appearance: none;
+  }
+  input:focus, select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  select:disabled { opacity: 0.5; }
+
+  .row {
+    display: flex;
+    gap: 12px;
+  }
+  .field-monto { flex: 2; }
+  .field-moneda { flex: 1; }
+
+  .btn {
+    width: 100%;
+    min-height: 52px;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent);
+    border: none;
+    border-radius: 12px;
+    padding: 14px;
+    margin-top: 4px;
+    cursor: pointer;
+  }
+  .btn:active { background: var(--accent-press); }
+  .btn:disabled { opacity: 0.6; cursor: default; }
+
+  /* --- Toast --- */
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    max-width: 90%;
+    padding: 12px 18px;
+    border-radius: 12px;
+    font-size: 0.95rem;
+    color: #fff;
+    background: #333;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+    z-index: 10;
+  }
+  .toast.ok  { background: #1e7e46; color: #fff; }
+  .toast.err { background: #a02820; color: #fff; }
 </style>
