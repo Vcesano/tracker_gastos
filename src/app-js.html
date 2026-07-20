@@ -16,6 +16,7 @@
       tipo: $('f-tipo'),
       categoria: $('f-categoria'),
       subcategoria: $('f-subcategoria'),
+      tipomedio: $('f-tipomedio'),
       medio: $('f-medio'),
       monto: $('f-monto'),
       moneda: $('f-moneda'),
@@ -38,6 +39,11 @@
       return out;
     }
 
+    // Orden alfabético es-AR (case/acentos-insensible) por la etiqueta visible.
+    function byLabel(a, b) {
+      return String(a.label).localeCompare(String(b.label), 'es', { sensitivity: 'base' });
+    }
+
     function fillSelect(sel, opciones, placeholder) {
       sel.innerHTML = '';
       var ph = document.createElement('option');
@@ -46,7 +52,7 @@
       ph.disabled = true;
       ph.selected = true;
       sel.appendChild(ph);
-      opciones.forEach(function (o) {
+      opciones.slice().sort(byLabel).forEach(function (o) {
         var opt = document.createElement('option');
         opt.value = o.value;
         opt.textContent = o.label;
@@ -61,6 +67,30 @@
       el.toast.hidden = false;
       if (toastTimer) clearTimeout(toastTimer);
       toastTimer = setTimeout(function () { el.toast.hidden = true; }, 3200);
+    }
+
+    // ---- Monto con separador de miles es-AR (miles ".", decimal ",") ----
+    // Los "." son siempre separadores de miles (los inserta este formateo); el
+    // decimal se ingresa con "," (máx 2). Así el parseo queda sin ambigüedad.
+    function formatMonto(raw) {
+      var s = String(raw).replace(/[^\d,]/g, '');   // solo dígitos y coma (los "." se descartan)
+      var firstComma = s.indexOf(',');
+      var intPart, decPart = null;
+      if (firstComma >= 0) {
+        intPart = s.slice(0, firstComma).replace(/,/g, '');
+        decPart = s.slice(firstComma + 1).replace(/,/g, '').slice(0, 2);
+      } else {
+        intPart = s;
+      }
+      intPart = intPart.replace(/^0+(?=\d)/, '');    // sin ceros a la izquierda
+      var intFmt = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+      if (intFmt === '' && decPart !== null) intFmt = '0';
+      return decPart !== null ? intFmt + ',' + decPart : intFmt;
+    }
+
+    function parseMonto(str) {
+      var s = String(str).replace(/\./g, '').replace(',', '.');
+      return parseFloat(s);
     }
 
     // ---- Cascada Tipo → Categoría → Subcategoría ----
@@ -87,8 +117,17 @@
       });
       fillSelect(el.subcategoria, rows, 'Elegí subcategoría…');
       el.subcategoria.disabled = false;
-      // Si hay una sola, seleccionarla directo.
       if (rows.length === 1) el.subcategoria.value = rows[0].value;
+    }
+
+    // ---- Cascada Tipo de medio → Medio de pago ----
+    function onTipoMedioChange() {
+      var tm = el.tipomedio.value;
+      var opts = medios.filter(function (m) { return m.tipo_medio === tm; })
+                       .map(function (m) { return { value: m.id, label: m.entidad }; });
+      fillSelect(el.medio, opts, 'Elegí medio…');
+      el.medio.disabled = false;
+      if (opts.length === 1) el.medio.value = opts[0].value;
     }
 
     // ---- Carga inicial de catálogos ----
@@ -109,13 +148,19 @@
             return;
           }
 
-          // Poblar tipo y medio
           var tipos = distinct(categorias.map(function (c) { return c.tipo; }))
             .map(function (t) { return { value: t, label: t }; });
           fillSelect(el.tipo, tipos, 'Elegí tipo…');
 
-          var mediosOpts = medios.map(function (m) { return { value: m.id, label: m.entidad }; });
-          fillSelect(el.medio, mediosOpts, 'Elegí medio…');
+          // Tipos de medio: derivados de los datos, EXCLUYENDO "Credito" (una
+          // tarjeta de crédito no es medio de un gasto directo — ver It 2).
+          var tiposMedio = distinct(
+            medios.map(function (m) { return m.tipo_medio; })
+                  .filter(function (t) { return t !== 'Credito'; })
+          ).map(function (t) { return { value: t, label: t }; });
+          fillSelect(el.tipomedio, tiposMedio, 'Elegí tipo de medio…');
+          fillSelect(el.medio, [], 'Elegí tipo de medio primero…');
+          el.medio.disabled = true;
 
           el.fecha.value = hoyISO();
           el.loadingCard.hidden = true;
@@ -132,7 +177,7 @@
     function onSubmit(ev) {
       ev.preventDefault();
 
-      var monto = parseFloat(String(el.monto.value).replace(',', '.'));
+      var monto = parseMonto(el.monto.value);
       if (!isFinite(monto) || monto <= 0) { toast('El monto debe ser mayor a 0.', 'err'); el.monto.focus(); return; }
       if (!el.subcategoria.value) { toast('Elegí una categoría completa.', 'err'); return; }
       if (!el.medio.value) { toast('Elegí un medio de pago.', 'err'); return; }
@@ -155,7 +200,7 @@
           el.submit.textContent = 'Guardar gasto';
           if (res && res.ok) {
             toast('✓ Gasto guardado', 'ok');
-            // Reset para carga rápida: conservo fecha/tipo/categoría/medio/moneda.
+            // Reset para carga rápida: conservo fecha/categoría/medio/moneda.
             el.monto.value = '';
             el.descripcion.value = '';
             el.monto.focus();
@@ -174,6 +219,8 @@
     // ---- Wire up ----
     el.tipo.addEventListener('change', onTipoChange);
     el.categoria.addEventListener('change', onCategoriaChange);
+    el.tipomedio.addEventListener('change', onTipoMedioChange);
+    el.monto.addEventListener('input', function () { el.monto.value = formatMonto(el.monto.value); });
     el.form.addEventListener('submit', onSubmit);
     cargarCatalogos();
   })();

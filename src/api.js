@@ -75,10 +75,15 @@ function crearGasto(payload) {
     });
     if (!catOk) return { ok: false, error: 'La categoría elegida no existe o está inactiva.' };
 
-    var medioOk = leerTabla_('MediosPago').some(function (m) {
-      return String(m.id) === medioId && esActivo_(m.activo);
-    });
-    if (!medioOk) return { ok: false, error: 'El medio de pago elegido no existe o está inactivo.' };
+    var medio = leerTabla_('MediosPago').filter(function (m) { return String(m.id) === medioId; })[0];
+    if (!medio || !esActivo_(medio.activo)) {
+      return { ok: false, error: 'El medio de pago elegido no existe o está inactivo.' };
+    }
+    // Un gasto directo nunca se paga con una tarjeta de crédito: eso se registra
+    // como pago de cuota (It 2), y ahí el medio real es la cuenta que paga el resumen.
+    if (String(medio.tipo_medio).trim() === 'Credito') {
+      return { ok: false, error: 'No se puede pagar un gasto directo con una tarjeta de crédito.' };
+    }
 
     var gasto = {
       id: nuevoId_(),
