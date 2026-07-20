@@ -1,16 +1,25 @@
 <script>
-  // It 1 (1a): carga rápida de gasto diario. Vanilla JS, sin frameworks.
+  // It 1 (1a + 1b): carga y historial de gastos. Vanilla JS, sin frameworks.
   (function () {
     'use strict';
 
     var $ = function (id) { return document.getElementById(id); };
     var categorias = [];   // [{id, tipo, categoria, subcategoria}] activas
     var medios = [];       // [{id, entidad, tipo_medio}] activos
+    var optTipos = [];     // opciones de "Tipo" (categorías)
+    var optTiposMedio = [];// opciones de "Tipo de medio" (sin Credito)
+    var editId = null;     // id del gasto en edición; null = alta
+    var histActuales = []; // últimos gastos listados (para resolver Editar)
 
     var el = {
-      formCard: $('form-card'),
+      tabs: $('tabs'),
       loadingCard: $('loading-card'),
       loadingStatus: $('loading-status'),
+      // form
+      formCard: $('form-card'),
+      formTitle: $('form-title'),
+      editBanner: $('edit-banner'),
+      editCancel: $('edit-cancel'),
       form: $('form-gasto'),
       fecha: $('f-fecha'),
       tipo: $('f-tipo'),
@@ -22,6 +31,13 @@
       moneda: $('f-moneda'),
       descripcion: $('f-descripcion'),
       submit: $('f-submit'),
+      // historial
+      histCard: $('historial-card'),
+      hMes: $('h-mes'),
+      hCategoria: $('h-categoria'),
+      hMedio: $('h-medio'),
+      histResumen: $('hist-resumen'),
+      histList: $('hist-list'),
       toast: $('toast')
     };
 
@@ -39,25 +55,48 @@
       return out;
     }
 
-    // Orden alfabético es-AR (case/acentos-insensible) por la etiqueta visible.
+    function findById(arr, id) {
+      for (var i = 0; i < arr.length; i++) if (String(arr[i].id) === String(id)) return arr[i];
+      return null;
+    }
+
     function byLabel(a, b) {
       return String(a.label).localeCompare(String(b.label), 'es', { sensitivity: 'base' });
     }
 
+    function fmtMoneda(n, moneda) {
+      var s = new Intl.NumberFormat('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(n);
+      return (moneda ? moneda + ' ' : '') + s;
+    }
+
+    // Rellena un <select> con un placeholder deshabilitado + opciones ordenadas.
     function fillSelect(sel, opciones, placeholder) {
       sel.innerHTML = '';
       var ph = document.createElement('option');
-      ph.value = '';
-      ph.textContent = placeholder;
-      ph.disabled = true;
-      ph.selected = true;
+      ph.value = ''; ph.textContent = placeholder; ph.disabled = true; ph.selected = true;
       sel.appendChild(ph);
       opciones.slice().sort(byLabel).forEach(function (o) {
         var opt = document.createElement('option');
-        opt.value = o.value;
-        opt.textContent = o.label;
+        opt.value = o.value; opt.textContent = o.label;
         sel.appendChild(opt);
       });
+    }
+
+    // Rellena un <select> de filtro: primera opción "todos" (value ''). Preserva
+    // la selección actual si sigue existiendo. `ordenar`=false mantiene el orden dado.
+    function fillFiltro(sel, opciones, labelTodos, ordenar) {
+      var keep = sel.value;
+      sel.innerHTML = '';
+      var all = document.createElement('option');
+      all.value = ''; all.textContent = labelTodos;
+      sel.appendChild(all);
+      var lista = ordenar === false ? opciones : opciones.slice().sort(byLabel);
+      lista.forEach(function (o) {
+        var opt = document.createElement('option');
+        opt.value = o.value; opt.textContent = o.label;
+        sel.appendChild(opt);
+      });
+      if (keep) sel.value = keep;
     }
 
     var toastTimer = null;
@@ -70,10 +109,8 @@
     }
 
     // ---- Monto con separador de miles es-AR (miles ".", decimal ",") ----
-    // Los "." son siempre separadores de miles (los inserta este formateo); el
-    // decimal se ingresa con "," (máx 2). Así el parseo queda sin ambigüedad.
     function formatMonto(raw) {
-      var s = String(raw).replace(/[^\d,]/g, '');   // solo dígitos y coma (los "." se descartan)
+      var s = String(raw).replace(/[^\d,]/g, '');
       var firstComma = s.indexOf(',');
       var intPart, decPart = null;
       if (firstComma >= 0) {
@@ -82,101 +119,212 @@
       } else {
         intPart = s;
       }
-      intPart = intPart.replace(/^0+(?=\d)/, '');    // sin ceros a la izquierda
+      intPart = intPart.replace(/^0+(?=\d)/, '');
       var intFmt = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
       if (intFmt === '' && decPart !== null) intFmt = '0';
       return decPart !== null ? intFmt + ',' + decPart : intFmt;
     }
-
     function parseMonto(str) {
-      var s = String(str).replace(/\./g, '').replace(',', '.');
-      return parseFloat(s);
+      return parseFloat(String(str).replace(/\./g, '').replace(',', '.'));
+    }
+    function montoAInput(n) {
+      return formatMonto(String(n).replace('.', ','));
     }
 
     // ---- Cascada Tipo → Categoría → Subcategoría ----
-    // El value de la subcategoría ES el categoria_id (cada fila de Categorias
-    // es un id único con su tipo/categoria/subcategoria).
     function onTipoChange() {
       var tipo = el.tipo.value;
       var cats = distinct(
-        categorias.filter(function (c) { return c.tipo === tipo; })
-                  .map(function (c) { return c.categoria; })
+        categorias.filter(function (c) { return c.tipo === tipo; }).map(function (c) { return c.categoria; })
       ).map(function (cat) { return { value: cat, label: cat }; });
       fillSelect(el.categoria, cats, 'Elegí categoría…');
       el.categoria.disabled = false;
       fillSelect(el.subcategoria, [], 'Elegí categoría primero…');
       el.subcategoria.disabled = true;
     }
-
     function onCategoriaChange() {
       var tipo = el.tipo.value, cat = el.categoria.value;
-      var rows = categorias.filter(function (c) {
-        return c.tipo === tipo && c.categoria === cat;
-      }).map(function (c) {
-        return { value: c.id, label: c.subcategoria || '(sin subcategoría)' };
-      });
+      var rows = categorias.filter(function (c) { return c.tipo === tipo && c.categoria === cat; })
+        .map(function (c) { return { value: c.id, label: c.subcategoria || '(sin subcategoría)' }; });
       fillSelect(el.subcategoria, rows, 'Elegí subcategoría…');
       el.subcategoria.disabled = false;
       if (rows.length === 1) el.subcategoria.value = rows[0].value;
     }
-
-    // ---- Cascada Tipo de medio → Medio de pago ----
     function onTipoMedioChange() {
       var tm = el.tipomedio.value;
       var opts = medios.filter(function (m) { return m.tipo_medio === tm; })
-                       .map(function (m) { return { value: m.id, label: m.entidad }; });
+        .map(function (m) { return { value: m.id, label: m.entidad }; });
       fillSelect(el.medio, opts, 'Elegí medio…');
       el.medio.disabled = false;
       if (opts.length === 1) el.medio.value = opts[0].value;
     }
 
-    // ---- Carga inicial de catálogos ----
-    function cargarCatalogos() {
-      google.script.run
-        .withSuccessHandler(function (res) {
-          if (!res || !res.ok) {
-            el.loadingStatus.textContent = '✗ ' + ((res && res.error) || 'No se pudieron cargar los catálogos.');
-            el.loadingStatus.className = 'err';
-            return;
-          }
-          categorias = res.data.categorias || [];
-          medios = res.data.medios || [];
-
-          if (!categorias.length || !medios.length) {
-            el.loadingStatus.textContent = '✗ Faltan categorías o medios de pago activos en la Sheet.';
-            el.loadingStatus.className = 'err';
-            return;
-          }
-
-          var tipos = distinct(categorias.map(function (c) { return c.tipo; }))
-            .map(function (t) { return { value: t, label: t }; });
-          fillSelect(el.tipo, tipos, 'Elegí tipo…');
-
-          // Tipos de medio: derivados de los datos, EXCLUYENDO "Credito" (una
-          // tarjeta de crédito no es medio de un gasto directo — ver It 2).
-          var tiposMedio = distinct(
-            medios.map(function (m) { return m.tipo_medio; })
-                  .filter(function (t) { return t !== 'Credito'; })
-          ).map(function (t) { return { value: t, label: t }; });
-          fillSelect(el.tipomedio, tiposMedio, 'Elegí tipo de medio…');
-          fillSelect(el.medio, [], 'Elegí tipo de medio primero…');
-          el.medio.disabled = true;
-
-          el.fecha.value = hoyISO();
-          el.loadingCard.hidden = true;
-          el.formCard.hidden = false;
-        })
-        .withFailureHandler(function (err) {
-          el.loadingStatus.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
-          el.loadingStatus.className = 'err';
-        })
-        .getCatalogos();
+    // Prefill de cascadas para edición. Devuelve false si el id no está entre
+    // los activos (categoría/medio dado de baja): el usuario deberá re-elegir.
+    function setCascadaCategoria(categoriaId) {
+      var c = findById(categorias, categoriaId);
+      if (!c) return false;
+      el.tipo.value = c.tipo; onTipoChange();
+      el.categoria.value = c.categoria; onCategoriaChange();
+      el.subcategoria.value = String(categoriaId);
+      return true;
+    }
+    function setCascadaMedio(medioId) {
+      var m = findById(medios, medioId);
+      if (!m) return false;
+      el.tipomedio.value = m.tipo_medio; onTipoMedioChange();
+      el.medio.value = String(medioId);
+      return true;
     }
 
-    // ---- Submit ----
+    // ---- Modo alta / edición del form ----
+    function resetFormFields() {
+      el.fecha.value = hoyISO();
+      fillSelect(el.tipo, optTipos, 'Elegí tipo…');
+      fillSelect(el.categoria, [], 'Elegí tipo primero…'); el.categoria.disabled = true;
+      fillSelect(el.subcategoria, [], 'Elegí categoría primero…'); el.subcategoria.disabled = true;
+      fillSelect(el.tipomedio, optTiposMedio, 'Elegí tipo de medio…');
+      fillSelect(el.medio, [], 'Elegí tipo de medio primero…'); el.medio.disabled = true;
+      el.monto.value = ''; el.moneda.value = 'ARS'; el.descripcion.value = '';
+    }
+
+    function enterCreateMode() {
+      editId = null;
+      el.formTitle.textContent = 'Nuevo gasto';
+      el.submit.textContent = 'Guardar gasto';
+      el.editBanner.hidden = true;
+      resetFormFields();
+    }
+
+    function enterEditMode(g) {
+      editId = g.id;
+      el.formTitle.textContent = 'Editar gasto';
+      el.submit.textContent = 'Guardar cambios';
+      el.editBanner.hidden = false;
+      el.fecha.value = g.fecha;
+      if (!setCascadaCategoria(g.categoria_id)) {
+        fillSelect(el.tipo, optTipos, 'Elegí tipo…');
+        toast('La categoría original está inactiva: reelegila.', '');
+      }
+      if (!setCascadaMedio(g.medio_pago_id)) {
+        fillSelect(el.tipomedio, optTiposMedio, 'Elegí tipo de medio…');
+      }
+      el.monto.value = montoAInput(g.monto);
+      el.moneda.value = g.moneda || 'ARS';
+      el.descripcion.value = g.descripcion || '';
+      showView('form');
+      window.scrollTo(0, 0);
+    }
+
+    // ---- Navegación ----
+    function showView(v) {
+      var secs = document.querySelectorAll('.view');
+      for (var i = 0; i < secs.length; i++) secs[i].hidden = secs[i].getAttribute('data-view') !== v;
+      var tabs = document.querySelectorAll('.tab');
+      for (var j = 0; j < tabs.length; j++) {
+        tabs[j].classList.toggle('active', tabs[j].getAttribute('data-view') === v);
+      }
+    }
+
+    // ---- Historial ----
+    function cargarHistorial() {
+      el.histResumen.textContent = 'Cargando…';
+      el.histList.innerHTML = '';
+      var filtros = { mes: el.hMes.value, categoria_id: el.hCategoria.value, medio_pago_id: el.hMedio.value };
+      google.script.run
+        .withSuccessHandler(function (res) {
+          if (!res || !res.ok) { el.histResumen.textContent = '✗ ' + ((res && res.error) || 'Error al listar.'); return; }
+          histActuales = res.data.gastos || [];
+          var meses = (res.data.meses || []).map(function (m) { return { value: m, label: m }; });
+          fillFiltro(el.hMes, meses, 'Todos los meses', false);
+          renderHistorial(histActuales);
+        })
+        .withFailureHandler(function (err) {
+          el.histResumen.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
+        })
+        .listarGastos(filtros);
+    }
+
+    function renderHistorial(gastos) {
+      el.histResumen.textContent = gastos.length + (gastos.length === 1 ? ' gasto' : ' gastos');
+      if (!gastos.length) { el.histList.innerHTML = '<p class="muted">No hay gastos con esos filtros.</p>'; return; }
+
+      var frag = document.createDocumentFragment();
+      gastos.forEach(function (g) {
+        var row = document.createElement('div');
+        row.className = 'gasto';
+
+        var main = document.createElement('div');
+        main.className = 'gasto-main';
+
+        var desc = document.createElement('p');
+        desc.className = 'gasto-desc';
+        desc.textContent = g.descripcion || '(sin descripción)';
+        if (g.es_cuota) {
+          var badge = document.createElement('span');
+          badge.className = 'badge';
+          badge.textContent = g.nro_cuota ? 'cuota ' + g.nro_cuota : 'cuota';
+          desc.appendChild(badge);
+        }
+
+        var meta = document.createElement('div');
+        meta.className = 'gasto-meta';
+        meta.textContent = g.fecha + ' · ' + g.categoria_label + ' · ' + g.medio_label;
+
+        var acc = document.createElement('div');
+        acc.className = 'gasto-acciones';
+        var bEd = document.createElement('button');
+        bEd.className = 'icon-btn'; bEd.type = 'button'; bEd.textContent = '✎ Editar';
+        bEd.setAttribute('data-edit', g.id);
+        var bDel = document.createElement('button');
+        bDel.className = 'icon-btn danger'; bDel.type = 'button'; bDel.textContent = '🗑 Borrar';
+        bDel.setAttribute('data-del', g.id);
+        acc.appendChild(bEd); acc.appendChild(bDel);
+
+        main.appendChild(desc); main.appendChild(meta); main.appendChild(acc);
+
+        var side = document.createElement('div');
+        side.className = 'gasto-side';
+        var monto = document.createElement('span');
+        monto.className = 'gasto-monto';
+        monto.textContent = fmtMoneda(g.monto, g.moneda);
+        side.appendChild(monto);
+
+        row.appendChild(main); row.appendChild(side);
+        frag.appendChild(row);
+      });
+      el.histList.innerHTML = '';
+      el.histList.appendChild(frag);
+    }
+
+    function onHistClick(ev) {
+      var t = ev.target;
+      var idEd = t.getAttribute && t.getAttribute('data-edit');
+      var idDel = t.getAttribute && t.getAttribute('data-del');
+      if (idEd) {
+        var g = findById(histActuales, idEd);
+        if (g) enterEditMode(g);
+        return;
+      }
+      if (idDel) {
+        if (!window.confirm('¿Borrar este gasto? No se puede deshacer.')) return;
+        t.disabled = true;
+        google.script.run
+          .withSuccessHandler(function (res) {
+            if (res && res.ok) { toast('✓ Gasto borrado', 'ok'); cargarHistorial(); }
+            else { t.disabled = false; toast('✗ ' + ((res && res.error) || 'No se pudo borrar.'), 'err'); }
+          })
+          .withFailureHandler(function (err) {
+            t.disabled = false;
+            toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err');
+          })
+          .borrarGasto(idDel);
+      }
+    }
+
+    // ---- Submit (alta o edición) ----
     function onSubmit(ev) {
       ev.preventDefault();
-
       var monto = parseMonto(el.monto.value);
       if (!isFinite(monto) || monto <= 0) { toast('El monto debe ser mayor a 0.', 'err'); el.monto.focus(); return; }
       if (!el.subcategoria.value) { toast('Elegí una categoría completa.', 'err'); return; }
@@ -191,29 +339,82 @@
         moneda: el.moneda.value
       };
 
+      var editando = !!editId;
       el.submit.disabled = true;
-      el.submit.textContent = 'Guardando…';
+      el.submit.textContent = editando ? 'Guardando…' : 'Guardando…';
 
-      google.script.run
+      var handler = google.script.run
         .withSuccessHandler(function (res) {
           el.submit.disabled = false;
-          el.submit.textContent = 'Guardar gasto';
           if (res && res.ok) {
-            toast('✓ Gasto guardado', 'ok');
-            // Reset para carga rápida: conservo fecha/categoría/medio/moneda.
-            el.monto.value = '';
-            el.descripcion.value = '';
-            el.monto.focus();
+            if (editando) {
+              toast('✓ Cambios guardados', 'ok');
+              enterCreateMode();
+              showView('historial');
+              cargarHistorial();
+            } else {
+              toast('✓ Gasto guardado', 'ok');
+              el.submit.textContent = 'Guardar gasto';
+              el.monto.value = ''; el.descripcion.value = '';
+              el.monto.focus();
+            }
           } else {
+            el.submit.textContent = editando ? 'Guardar cambios' : 'Guardar gasto';
             toast('✗ ' + ((res && res.error) || 'No se pudo guardar.'), 'err');
           }
         })
         .withFailureHandler(function (err) {
           el.submit.disabled = false;
-          el.submit.textContent = 'Guardar gasto';
+          el.submit.textContent = editando ? 'Guardar cambios' : 'Guardar gasto';
           toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err');
+        });
+
+      if (editando) handler.actualizarGasto(editId, payload);
+      else handler.crearGasto(payload);
+    }
+
+    // ---- Carga inicial ----
+    function cargarCatalogos() {
+      google.script.run
+        .withSuccessHandler(function (res) {
+          if (!res || !res.ok) {
+            el.loadingStatus.textContent = '✗ ' + ((res && res.error) || 'No se pudieron cargar los catálogos.');
+            el.loadingStatus.className = 'err';
+            return;
+          }
+          categorias = res.data.categorias || [];
+          medios = res.data.medios || [];
+          if (!categorias.length || !medios.length) {
+            el.loadingStatus.textContent = '✗ Faltan categorías o medios de pago activos en la Sheet.';
+            el.loadingStatus.className = 'err';
+            return;
+          }
+
+          optTipos = distinct(categorias.map(function (c) { return c.tipo; }))
+            .map(function (t) { return { value: t, label: t }; });
+          optTiposMedio = distinct(
+            medios.map(function (m) { return m.tipo_medio; }).filter(function (t) { return t !== 'Credito'; })
+          ).map(function (t) { return { value: t, label: t }; });
+
+          // Filtros del historial (categoría y medio) — se llenan una vez.
+          var catFiltro = categorias.map(function (c) {
+            var lbl = c.categoria + (c.subcategoria ? ' › ' + c.subcategoria : '');
+            return { value: c.id, label: lbl };
+          });
+          fillFiltro(el.hCategoria, catFiltro, 'Todas las categorías', true);
+          var medFiltro = medios.map(function (m) { return { value: m.id, label: m.entidad }; });
+          fillFiltro(el.hMedio, medFiltro, 'Todos los medios', true);
+
+          enterCreateMode();
+          el.loadingCard.hidden = true;
+          el.tabs.hidden = false;
+          showView('form');
         })
-        .crearGasto(payload);
+        .withFailureHandler(function (err) {
+          el.loadingStatus.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
+          el.loadingStatus.className = 'err';
+        })
+        .getCatalogos();
     }
 
     // ---- Wire up ----
@@ -222,6 +423,21 @@
     el.tipomedio.addEventListener('change', onTipoMedioChange);
     el.monto.addEventListener('input', function () { el.monto.value = formatMonto(el.monto.value); });
     el.form.addEventListener('submit', onSubmit);
+    el.editCancel.addEventListener('click', function () { enterCreateMode(); showView('form'); });
+    el.histList.addEventListener('click', onHistClick);
+    el.hMes.addEventListener('change', cargarHistorial);
+    el.hCategoria.addEventListener('change', cargarHistorial);
+    el.hMedio.addEventListener('change', cargarHistorial);
+
+    var tabBtns = document.querySelectorAll('.tab');
+    for (var i = 0; i < tabBtns.length; i++) {
+      tabBtns[i].addEventListener('click', function () {
+        var v = this.getAttribute('data-view');
+        if (v === 'form') { enterCreateMode(); showView('form'); }
+        else { showView('historial'); cargarHistorial(); }
+      });
+    }
+
     cargarCatalogos();
   })();
 </script>

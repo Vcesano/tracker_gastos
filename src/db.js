@@ -67,6 +67,73 @@ function insertarFilas_(nombre, objetos) {
 }
 
 /**
+ * Actualiza una fila (identificada por su columna `id`) aplicando `cambios`
+ * {header: valor}. Solo se tocan los headers presentes en `cambios`. Escritura
+ * de una sola fila (no es loop de escritura) con lock. Devuelve true si la
+ * encontró y actualizó, false si no existe ese id.
+ */
+function actualizarFila_(nombre, id, cambios) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    throw new Error('No se pudo tomar el lock (otra escritura en curso). Probá de nuevo.');
+  }
+  try {
+    var hoja = abrirSS_().getSheetByName(nombre);
+    if (!hoja) throw new Error('No existe la pestaña "' + nombre + '".');
+    var lc = hoja.getLastColumn(), lr = hoja.getLastRow();
+    var headers = hoja.getRange(1, 1, 1, lc).getValues()[0].map(function (h) { return String(h).trim(); });
+    var idCol = headers.indexOf('id');
+    if (idCol < 0) throw new Error('La pestaña "' + nombre + '" no tiene columna id.');
+    if (lr < 2) return false;
+    var valores = hoja.getRange(2, 1, lr - 1, lc).getValues();
+    for (var i = 0; i < valores.length; i++) {
+      if (String(valores[i][idCol]) !== String(id)) continue;
+      headers.forEach(function (h, ci) {
+        if (Object.prototype.hasOwnProperty.call(cambios, h)) valores[i][ci] = cambios[h];
+      });
+      hoja.getRange(i + 2, 1, 1, lc).setValues([valores[i]]);
+      SpreadsheetApp.flush();
+      return true;
+    }
+    return false;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Borra FÍSICAMENTE la fila con ese `id` (deleteRow). Con lock. Devuelve true
+ * si la encontró y borró, false si no existe. Borrado físico permitido solo en
+ * `Gastos` (los maestros usan soft delete activo=FALSE, ver ABM en 1c).
+ */
+function borrarFila_(nombre, id) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    throw new Error('No se pudo tomar el lock (otra escritura en curso). Probá de nuevo.');
+  }
+  try {
+    var hoja = abrirSS_().getSheetByName(nombre);
+    if (!hoja) throw new Error('No existe la pestaña "' + nombre + '".');
+    var lc = hoja.getLastColumn(), lr = hoja.getLastRow();
+    var headers = hoja.getRange(1, 1, 1, lc).getValues()[0].map(function (h) { return String(h).trim(); });
+    var idCol = headers.indexOf('id');
+    if (idCol < 0) throw new Error('La pestaña "' + nombre + '" no tiene columna id.');
+    if (lr < 2) return false;
+    var ids = hoja.getRange(2, idCol + 1, lr - 1, 1).getValues();
+    for (var i = 0; i < ids.length; i++) {
+      if (String(ids[i][0]) === String(id)) {
+        hoja.deleteRow(i + 2);
+        SpreadsheetApp.flush();
+        return true;
+      }
+    }
+    return false;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
  * true si el valor de la columna `activo` cuenta como activo. La migración
  * escribe booleanos, pero una edición manual en la Sheet puede dejar el texto
  * "TRUE"/"VERDADERO": se contemplan ambos.

@@ -11,8 +11,18 @@
         <h1>Gastos</h1>
       </header>
 
-      <section class="card" id="form-card" hidden>
-        <h2 class="card-title">Nuevo gasto</h2>
+      <nav class="tabs" id="tabs" hidden>
+        <button type="button" class="tab active" data-view="form">Cargar</button>
+        <button type="button" class="tab" data-view="historial">Historial</button>
+      </nav>
+
+      <!-- ===== Vista: Cargar / Editar ===== -->
+      <section class="card view" id="form-card" data-view="form" hidden>
+        <div class="edit-banner" id="edit-banner" hidden>
+          <span>Editando un gasto</span>
+          <button type="button" id="edit-cancel" class="link">Cancelar</button>
+        </div>
+        <h2 class="card-title" id="form-title">Nuevo gasto</h2>
         <form id="form-gasto" autocomplete="off" novalidate>
           <label class="field">
             <span>Fecha</span>
@@ -65,6 +75,27 @@
 
           <button type="submit" id="f-submit" class="btn">Guardar gasto</button>
         </form>
+      </section>
+
+      <!-- ===== Vista: Historial ===== -->
+      <section class="card view" id="historial-card" data-view="historial" hidden>
+        <h2 class="card-title">Historial</h2>
+        <div class="filtros">
+          <label class="field">
+            <span>Mes</span>
+            <select id="h-mes"></select>
+          </label>
+          <label class="field">
+            <span>Categoría</span>
+            <select id="h-categoria"></select>
+          </label>
+          <label class="field">
+            <span>Medio</span>
+            <select id="h-medio"></select>
+          </label>
+        </div>
+        <p class="muted" id="hist-resumen"></p>
+        <div id="hist-list"></div>
       </section>
 
       <section class="card" id="loading-card">

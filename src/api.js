@@ -1,5 +1,5 @@
 /**
- * API cliente ↔ servidor (It 1, slice 1a).
+ * API cliente ↔ servidor (It 1, slices 1a + 1b).
  *
  * Contrato: TODA función pública devuelve { ok: true, data } o
  * { ok: false, error: 'mensaje claro' }. El cliente (app-js.html) muestra
@@ -39,6 +39,62 @@ function getCatalogos() {
 }
 
 /**
+ * Valida y normaliza el payload común a alta/edición de un gasto. Devuelve
+ * { ok:true, data:{ campos normalizados } } o { ok:false, error }. No escribe.
+ */
+function validarGastoPayload_(payload) {
+  payload = payload || {};
+
+  var fecha = String(payload.fecha || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+    return { ok: false, error: 'Fecha inválida (se espera yyyy-mm-dd).' };
+  }
+
+  var monto = Number(payload.monto);
+  if (!isFinite(monto) || monto <= 0) {
+    return { ok: false, error: 'El monto debe ser un número mayor a 0.' };
+  }
+
+  var moneda = String(payload.moneda || 'ARS').trim().toUpperCase();
+  if (MONEDAS_VALIDAS.indexOf(moneda) < 0) {
+    return { ok: false, error: 'Moneda inválida (ARS o USD).' };
+  }
+
+  var categoriaId = String(payload.categoria_id || '').trim();
+  if (!categoriaId) return { ok: false, error: 'Elegí una categoría.' };
+
+  var medioId = String(payload.medio_pago_id || '').trim();
+  if (!medioId) return { ok: false, error: 'Elegí un medio de pago.' };
+
+  var catOk = leerTabla_('Categorias').some(function (c) {
+    return String(c.id) === categoriaId && esActivo_(c.activo);
+  });
+  if (!catOk) return { ok: false, error: 'La categoría elegida no existe o está inactiva.' };
+
+  var medio = leerTabla_('MediosPago').filter(function (m) { return String(m.id) === medioId; })[0];
+  if (!medio || !esActivo_(medio.activo)) {
+    return { ok: false, error: 'El medio de pago elegido no existe o está inactivo.' };
+  }
+  // Un gasto directo nunca se paga con una tarjeta de crédito: eso se registra
+  // como pago de cuota (It 2), y ahí el medio real es la cuenta que paga el resumen.
+  if (String(medio.tipo_medio).trim() === 'Credito') {
+    return { ok: false, error: 'No se puede pagar un gasto directo con una tarjeta de crédito.' };
+  }
+
+  return {
+    ok: true,
+    data: {
+      fecha: fecha,
+      descripcion: String(payload.descripcion || '').trim(),
+      categoria_id: categoriaId,
+      medio_pago_id: medioId,
+      monto: monto,
+      moneda: moneda
+    }
+  };
+}
+
+/**
  * Da de alta un gasto (grano = un pago real). Inserta 1 fila en `Gastos` con
  * id nuevo. No maneja cuotas: compra_credito_id y nro_cuota quedan vacíos
  * (eso llega en It 2). `payload` = { fecha, descripcion, categoria_id,
@@ -46,53 +102,17 @@ function getCatalogos() {
  */
 function crearGasto(payload) {
   try {
-    payload = payload || {};
-
-    var fecha = String(payload.fecha || '').trim();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
-      return { ok: false, error: 'Fecha inválida (se espera yyyy-mm-dd).' };
-    }
-
-    var monto = Number(payload.monto);
-    if (!isFinite(monto) || monto <= 0) {
-      return { ok: false, error: 'El monto debe ser un número mayor a 0.' };
-    }
-
-    var moneda = String(payload.moneda || 'ARS').trim().toUpperCase();
-    if (MONEDAS_VALIDAS.indexOf(moneda) < 0) {
-      return { ok: false, error: 'Moneda inválida (ARS o USD).' };
-    }
-
-    var categoriaId = String(payload.categoria_id || '').trim();
-    if (!categoriaId) return { ok: false, error: 'Elegí una categoría.' };
-
-    var medioId = String(payload.medio_pago_id || '').trim();
-    if (!medioId) return { ok: false, error: 'Elegí un medio de pago.' };
-
-    // Validar que las FKs existan y estén activas (evita gastos huérfanos).
-    var catOk = leerTabla_('Categorias').some(function (c) {
-      return String(c.id) === categoriaId && esActivo_(c.activo);
-    });
-    if (!catOk) return { ok: false, error: 'La categoría elegida no existe o está inactiva.' };
-
-    var medio = leerTabla_('MediosPago').filter(function (m) { return String(m.id) === medioId; })[0];
-    if (!medio || !esActivo_(medio.activo)) {
-      return { ok: false, error: 'El medio de pago elegido no existe o está inactivo.' };
-    }
-    // Un gasto directo nunca se paga con una tarjeta de crédito: eso se registra
-    // como pago de cuota (It 2), y ahí el medio real es la cuenta que paga el resumen.
-    if (String(medio.tipo_medio).trim() === 'Credito') {
-      return { ok: false, error: 'No se puede pagar un gasto directo con una tarjeta de crédito.' };
-    }
+    var v = validarGastoPayload_(payload);
+    if (!v.ok) return v;
 
     var gasto = {
       id: nuevoId_(),
-      fecha: fecha,
-      descripcion: String(payload.descripcion || '').trim(),
-      categoria_id: categoriaId,
-      medio_pago_id: medioId,
-      monto: monto,
-      moneda: moneda,
+      fecha: v.data.fecha,
+      descripcion: v.data.descripcion,
+      categoria_id: v.data.categoria_id,
+      medio_pago_id: v.data.medio_pago_id,
+      monto: v.data.monto,
+      moneda: v.data.moneda,
       compra_credito_id: '',
       nro_cuota: '',
       creado_en: ahoraISO_()
@@ -100,6 +120,112 @@ function crearGasto(payload) {
 
     insertarFilas_('Gastos', [gasto]);
     return { ok: true, data: { id: gasto.id } };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Lista gastos con etiquetas (categoría y medio dereferenciados) y filtros
+ * opcionales. `filtros` = { mes:'YYYY-MM', categoria_id, medio_pago_id } (todos
+ * opcionales). Devuelve { gastos:[...], meses:['YYYY-MM'...] } donde `meses`
+ * es el set completo (para el selector), independiente del filtro aplicado.
+ */
+function listarGastos(filtros) {
+  try {
+    filtros = filtros || {};
+    var mes = String(filtros.mes || '').trim();
+    var catF = String(filtros.categoria_id || '').trim();
+    var medF = String(filtros.medio_pago_id || '').trim();
+
+    // Etiquetas (incluye inactivos para que un gasto viejo siga resolviendo).
+    var catLabel = {};
+    leerTabla_('Categorias').forEach(function (c) {
+      var lbl = String(c.categoria || '');
+      if (String(c.subcategoria || '').trim()) lbl += ' › ' + String(c.subcategoria).trim();
+      catLabel[String(c.id)] = lbl;
+    });
+    var medLabel = {};
+    leerTabla_('MediosPago').forEach(function (m) { medLabel[String(m.id)] = String(m.entidad || ''); });
+
+    var todos = leerTabla_('Gastos');
+
+    var mesesSet = {};
+    todos.forEach(function (g) {
+      var mm = String(g.fecha || '').slice(0, 7);
+      if (/^\d{4}-\d{2}$/.test(mm)) mesesSet[mm] = true;
+    });
+    var meses = Object.keys(mesesSet).sort().reverse();
+
+    var gastos = todos.filter(function (g) {
+      if (mes && String(g.fecha || '').slice(0, 7) !== mes) return false;
+      if (catF && String(g.categoria_id || '') !== catF) return false;
+      if (medF && String(g.medio_pago_id || '') !== medF) return false;
+      return true;
+    }).map(function (g) {
+      var cid = String(g.categoria_id || ''), mid = String(g.medio_pago_id || '');
+      var nro = g.nro_cuota === '' || g.nro_cuota === null ? '' : (Number(g.nro_cuota) || '');
+      return {
+        id: String(g.id),
+        fecha: String(g.fecha || ''),
+        descripcion: String(g.descripcion || ''),
+        categoria_id: cid,
+        categoria_label: catLabel[cid] || cid,
+        medio_pago_id: mid,
+        medio_label: medLabel[mid] || mid,
+        monto: Number(g.monto) || 0,
+        moneda: String(g.moneda || ''),
+        es_cuota: String(g.compra_credito_id || '').trim() !== '',
+        nro_cuota: nro
+      };
+    });
+
+    // Orden: fecha desc, y a igual fecha, creado_en desc (los últimos arriba).
+    gastos.sort(function (a, b) {
+      return a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0;
+    });
+
+    return { ok: true, data: { gastos: gastos, meses: meses } };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Edita un gasto existente. Solo toca los 6 campos editables; conserva id,
+ * creado_en y el vínculo de cuota (compra_credito_id, nro_cuota) intactos.
+ */
+function actualizarGasto(id, payload) {
+  try {
+    id = String(id || '').trim();
+    if (!id) return { ok: false, error: 'Falta el id del gasto a editar.' };
+
+    var v = validarGastoPayload_(payload);
+    if (!v.ok) return v;
+
+    var ok = actualizarFila_('Gastos', id, {
+      fecha: v.data.fecha,
+      descripcion: v.data.descripcion,
+      categoria_id: v.data.categoria_id,
+      medio_pago_id: v.data.medio_pago_id,
+      monto: v.data.monto,
+      moneda: v.data.moneda
+    });
+    if (!ok) return { ok: false, error: 'No se encontró el gasto (¿ya fue borrado?).' };
+    return { ok: true, data: { id: id } };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/** Borra físicamente un gasto por id. */
+function borrarGasto(id) {
+  try {
+    id = String(id || '').trim();
+    if (!id) return { ok: false, error: 'Falta el id del gasto a borrar.' };
+    var ok = borrarFila_('Gastos', id);
+    if (!ok) return { ok: false, error: 'No se encontró el gasto (¿ya fue borrado?).' };
+    return { ok: true, data: { id: id } };
   } catch (e) {
     return { ok: false, error: e.message };
   }
