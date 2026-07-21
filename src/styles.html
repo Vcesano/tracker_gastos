@@ -16,6 +16,10 @@
 
   * { box-sizing: border-box; }
 
+  /* El atributo hidden debe ganar siempre, aun sobre reglas de clase con
+     display (.tabs / .edit-banner usan flex). */
+  [hidden] { display: none !important; }
+
   html, body {
     margin: 0;
     padding: 0;
@@ -175,16 +179,17 @@
     font-size: 0.9rem;
   }
 
-  /* --- Filtros del historial --- */
-  .filtros {
+  /* --- Filtros del historial (2 filas: fechas arriba, selects abajo) --- */
+  .filtros { margin-bottom: 12px; }
+  .filtros-row {
     display: flex;
     gap: 10px;
-    flex-wrap: wrap;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
   }
-  .filtros .field {
+  .filtros-row:last-child { margin-bottom: 0; }
+  .filtros-row .field {
     flex: 1;
-    min-width: 90px;
+    min-width: 0;
     margin-bottom: 0;
   }
 

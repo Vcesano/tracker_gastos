@@ -248,7 +248,7 @@
         categorias.filter(function (c) { return c.categoria === cat && c.subcategoria; })
                   .map(function (c) { return c.subcategoria; })
       ).map(function (s) { return { value: s, label: s }; });
-      fillFiltro(el.hSubcategoria, subs, 'Todas las subcategorías', true);
+      fillFiltro(el.hSubcategoria, subs, 'Todo seleccionado', true);
       el.hSubcategoria.disabled = !cat;
       cargarHistorial();
     }
@@ -256,7 +256,7 @@
     function limpiarFiltros() {
       el.hDesde.value = ''; el.hHasta.value = '';
       el.hCategoria.value = '';
-      fillFiltro(el.hSubcategoria, [], 'Todas las subcategorías', true);
+      fillFiltro(el.hSubcategoria, [], 'Todo seleccionado', true);
       el.hSubcategoria.disabled = true;
       el.hMedio.value = '';
       cargarHistorial();
@@ -438,12 +438,12 @@
           // Filtros del historial (se llenan una vez).
           var catFiltro = distinct(categorias.map(function (c) { return c.categoria; }))
             .map(function (cat) { return { value: cat, label: cat }; });
-          fillFiltro(el.hCategoria, catFiltro, 'Todas las categorías', true);
-          fillFiltro(el.hSubcategoria, [], 'Todas las subcategorías', true);
+          fillFiltro(el.hCategoria, catFiltro, 'Todo seleccionado', true);
+          fillFiltro(el.hSubcategoria, [], 'Todo seleccionado', true);
           // Medios sin crédito: no se usan para pagar gastos.
           var medFiltro = medios.filter(function (m) { return m.tipo_medio !== 'Credito'; })
             .map(function (m) { return { value: m.id, label: m.entidad }; });
-          fillFiltro(el.hMedio, medFiltro, 'Todos los medios', true);
+          fillFiltro(el.hMedio, medFiltro, 'Todo seleccionado', true);
 
           enterCreateMode();
           el.loadingCard.hidden = true;
