@@ -229,3 +229,107 @@ function borrarGasto(id) {
     return { ok: false, error: e.message };
   }
 }
+
+/* ===================== ABM de maestros (slice 1c) ===================== */
+
+/**
+ * Todas las categorías y medios (incluidas las inactivas) para el ABM. La
+ * baja es lógica (activo=FALSE): nunca se borra físicamente un maestro.
+ */
+function getMaestros() {
+  try {
+    var categorias = leerTabla_('Categorias').map(function (c) {
+      return {
+        id: String(c.id), tipo: String(c.tipo || ''), categoria: String(c.categoria || ''),
+        subcategoria: String(c.subcategoria || ''), activo: esActivo_(c.activo)
+      };
+    });
+    var medios = leerTabla_('MediosPago').map(function (m) {
+      return {
+        id: String(m.id), tipo_medio: String(m.tipo_medio || ''),
+        entidad: String(m.entidad || ''), activo: esActivo_(m.activo)
+      };
+    });
+    return { ok: true, data: { categorias: categorias, medios: medios } };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+function crearCategoria(payload) {
+  try {
+    var v = validarCategoria_(payload, null);
+    if (!v.ok) return v;
+    var row = { id: nuevoId_(), tipo: v.data.tipo, categoria: v.data.categoria, subcategoria: v.data.subcategoria, activo: true };
+    insertarFilas_('Categorias', [row]);
+    return { ok: true, data: { id: row.id } };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+function actualizarCategoria(id, payload) {
+  try {
+    id = String(id || '').trim();
+    if (!id) return { ok: false, error: 'Falta el id de la categoría.' };
+    var v = validarCategoria_(payload, id);
+    if (!v.ok) return v;
+    var ok = actualizarFila_('Categorias', id, { tipo: v.data.tipo, categoria: v.data.categoria, subcategoria: v.data.subcategoria });
+    if (!ok) return { ok: false, error: 'No se encontró la categoría.' };
+    return { ok: true, data: { id: id } };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/** Baja/alta lógica de una categoría (activo TRUE/FALSE). Nunca borra. */
+function setActivoCategoria(id, activo) {
+  try {
+    id = String(id || '').trim();
+    if (!id) return { ok: false, error: 'Falta el id de la categoría.' };
+    var ok = actualizarFila_('Categorias', id, { activo: !!activo });
+    if (!ok) return { ok: false, error: 'No se encontró la categoría.' };
+    return { ok: true, data: { id: id, activo: !!activo } };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+function crearMedio(payload) {
+  try {
+    var v = validarMedio_(payload, null);
+    if (!v.ok) return v;
+    var row = { id: nuevoId_(), tipo_medio: v.data.tipo_medio, entidad: v.data.entidad, activo: true };
+    insertarFilas_('MediosPago', [row]);
+    return { ok: true, data: { id: row.id } };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+function actualizarMedio(id, payload) {
+  try {
+    id = String(id || '').trim();
+    if (!id) return { ok: false, error: 'Falta el id del medio.' };
+    var v = validarMedio_(payload, id);
+    if (!v.ok) return v;
+    var ok = actualizarFila_('MediosPago', id, { tipo_medio: v.data.tipo_medio, entidad: v.data.entidad });
+    if (!ok) return { ok: false, error: 'No se encontró el medio de pago.' };
+    return { ok: true, data: { id: id } };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/** Baja/alta lógica de un medio de pago (activo TRUE/FALSE). Nunca borra. */
+function setActivoMedio(id, activo) {
+  try {
+    id = String(id || '').trim();
+    if (!id) return { ok: false, error: 'Falta el id del medio.' };
+    var ok = actualizarFila_('MediosPago', id, { activo: !!activo });
+    if (!ok) return { ok: false, error: 'No se encontró el medio de pago.' };
+    return { ok: true, data: { id: id, activo: !!activo } };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}

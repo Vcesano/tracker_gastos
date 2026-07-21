@@ -14,6 +14,7 @@
       <nav class="tabs" id="tabs" hidden>
         <button type="button" class="tab active" data-view="form">Cargar</button>
         <button type="button" class="tab" data-view="historial">Historial</button>
+        <button type="button" class="tab" data-view="maestros">Maestros</button>
       </nav>
 
       <!-- ===== Vista: Cargar / Editar ===== -->
@@ -112,6 +113,56 @@
         </div>
         <p class="muted" id="hist-resumen"></p>
         <div id="hist-list"></div>
+      </section>
+
+      <!-- ===== Vista: Maestros (ABM) ===== -->
+      <section class="card view" id="maestros-card" data-view="maestros" hidden>
+        <h2 class="card-title">Maestros</h2>
+        <div class="subtabs">
+          <button type="button" class="subtab active" data-master="categorias">Categorías</button>
+          <button type="button" class="subtab" data-master="medios">Medios de pago</button>
+        </div>
+
+        <div class="editor" id="m-editor" hidden>
+          <h3 class="editor-title" id="m-editor-title">Nueva categoría</h3>
+
+          <div id="m-fields-cat">
+            <label class="field">
+              <span>Tipo</span>
+              <input type="text" id="m-cat-tipo" list="dl-tipos" placeholder="Diario / Mensual">
+            </label>
+            <label class="field">
+              <span>Categoría</span>
+              <input type="text" id="m-cat-categoria" list="dl-categorias" maxlength="60">
+            </label>
+            <label class="field">
+              <span>Subcategoría <em class="opt">(opcional)</em></span>
+              <input type="text" id="m-cat-subcategoria" maxlength="60">
+            </label>
+          </div>
+
+          <div id="m-fields-med" hidden>
+            <label class="field">
+              <span>Tipo de medio</span>
+              <input type="text" id="m-med-tipo" list="dl-tipomedios" placeholder="Efectivo / Debito - Transferencia / Credito">
+            </label>
+            <label class="field">
+              <span>Entidad <em class="opt">(nombre visible)</em></span>
+              <input type="text" id="m-med-entidad" maxlength="80">
+            </label>
+          </div>
+
+          <button type="button" id="m-save" class="btn">Guardar</button>
+          <button type="button" id="m-cancel" class="btn-sec">Cancelar</button>
+        </div>
+
+        <button type="button" id="m-nuevo" class="btn">➕ Agregar</button>
+        <p class="muted" id="m-resumen"></p>
+        <div id="m-list"></div>
+
+        <datalist id="dl-tipos"></datalist>
+        <datalist id="dl-categorias"></datalist>
+        <datalist id="dl-tipomedios"></datalist>
       </section>
 
       <section class="card" id="loading-card">

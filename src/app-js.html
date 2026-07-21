@@ -42,8 +42,30 @@
       hLimpiar: $('h-limpiar'),
       histResumen: $('hist-resumen'),
       histList: $('hist-list'),
+      // maestros
+      mEditor: $('m-editor'),
+      mEditorTitle: $('m-editor-title'),
+      mFieldsCat: $('m-fields-cat'),
+      mFieldsMed: $('m-fields-med'),
+      mCatTipo: $('m-cat-tipo'),
+      mCatCategoria: $('m-cat-categoria'),
+      mCatSubcategoria: $('m-cat-subcategoria'),
+      mMedTipo: $('m-med-tipo'),
+      mMedEntidad: $('m-med-entidad'),
+      mSave: $('m-save'),
+      mCancel: $('m-cancel'),
+      mNuevo: $('m-nuevo'),
+      mResumen: $('m-resumen'),
+      mList: $('m-list'),
+      dlTipos: $('dl-tipos'),
+      dlCategorias: $('dl-categorias'),
+      dlTipoMedios: $('dl-tipomedios'),
       toast: $('toast')
     };
+
+    var maestros = { categorias: [], medios: [] };
+    var masterActual = 'categorias';   // 'categorias' | 'medios'
+    var mEditId = null;                // id en edición; null = alta
 
     // ---- Utilidades ----
     function hoyISO() {
@@ -412,6 +434,185 @@
       else handler.crearGasto(payload);
     }
 
+    // ---- Maestros (ABM) ----
+    function fillDatalist(dl, valores) {
+      dl.innerHTML = '';
+      valores.slice().sort(function (a, b) { return String(a).localeCompare(String(b), 'es', { sensitivity: 'base' }); })
+        .forEach(function (v) {
+          var opt = document.createElement('option');
+          opt.value = v;
+          dl.appendChild(opt);
+        });
+    }
+
+    function refrescarDatalists() {
+      fillDatalist(el.dlTipos, distinct(maestros.categorias.map(function (c) { return c.tipo; }).filter(Boolean)));
+      fillDatalist(el.dlCategorias, distinct(maestros.categorias.map(function (c) { return c.categoria; }).filter(Boolean)));
+      fillDatalist(el.dlTipoMedios, distinct(maestros.medios.map(function (m) { return m.tipo_medio; }).filter(Boolean)));
+    }
+
+    function cerrarEditor() {
+      mEditId = null;
+      el.mEditor.hidden = true;
+      el.mNuevo.hidden = false;
+    }
+
+    function abrirEditor(item) {
+      mEditId = item ? item.id : null;
+      var esCat = masterActual === 'categorias';
+      el.mFieldsCat.hidden = !esCat;
+      el.mFieldsMed.hidden = esCat;
+      if (esCat) {
+        el.mEditorTitle.textContent = item ? 'Editar categoría' : 'Nueva categoría';
+        el.mCatTipo.value = item ? item.tipo : '';
+        el.mCatCategoria.value = item ? item.categoria : '';
+        el.mCatSubcategoria.value = item ? item.subcategoria : '';
+      } else {
+        el.mEditorTitle.textContent = item ? 'Editar medio de pago' : 'Nuevo medio de pago';
+        el.mMedTipo.value = item ? item.tipo_medio : '';
+        el.mMedEntidad.value = item ? item.entidad : '';
+      }
+      el.mEditor.hidden = false;
+      el.mNuevo.hidden = true;
+      el.mEditor.scrollIntoView({ block: 'nearest' });
+    }
+
+    function guardarMaestro() {
+      var esCat = masterActual === 'categorias';
+      el.mSave.disabled = true;
+      el.mSave.textContent = 'Guardando…';
+
+      function done(res) {
+        el.mSave.disabled = false;
+        el.mSave.textContent = 'Guardar';
+        if (res && res.ok) {
+          toast('✓ Guardado', 'ok');
+          cerrarEditor();
+          cargarMaestros();
+        } else {
+          toast('✗ ' + ((res && res.error) || 'No se pudo guardar.'), 'err');
+        }
+      }
+      function fail(err) {
+        el.mSave.disabled = false;
+        el.mSave.textContent = 'Guardar';
+        toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err');
+      }
+
+      if (esCat) {
+        var pc = {
+          tipo: el.mCatTipo.value.trim(),
+          categoria: el.mCatCategoria.value.trim(),
+          subcategoria: el.mCatSubcategoria.value.trim()
+        };
+        if (!pc.tipo || !pc.categoria) { el.mSave.disabled = false; el.mSave.textContent = 'Guardar'; toast('Completá tipo y categoría.', 'err'); return; }
+        var rc = google.script.run.withSuccessHandler(done).withFailureHandler(fail);
+        if (mEditId) rc.actualizarCategoria(mEditId, pc); else rc.crearCategoria(pc);
+      } else {
+        var pm = { tipo_medio: el.mMedTipo.value.trim(), entidad: el.mMedEntidad.value.trim() };
+        if (!pm.tipo_medio || !pm.entidad) { el.mSave.disabled = false; el.mSave.textContent = 'Guardar'; toast('Completá tipo de medio y entidad.', 'err'); return; }
+        var rm = google.script.run.withSuccessHandler(done).withFailureHandler(fail);
+        if (mEditId) rm.actualizarMedio(mEditId, pm); else rm.crearMedio(pm);
+      }
+    }
+
+    function toggleActivoMaestro(item) {
+      var esCat = masterActual === 'categorias';
+      var accion = item.activo ? 'desactivar' : 'activar';
+      if (!window.confirm('¿Seguro que querés ' + accion + ' este maestro?')) return;
+      function done(res) {
+        if (res && res.ok) { toast('✓ Actualizado', 'ok'); cargarMaestros(); }
+        else { toast('✗ ' + ((res && res.error) || 'No se pudo actualizar.'), 'err'); }
+      }
+      function fail(err) { toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err'); }
+      var r = google.script.run.withSuccessHandler(done).withFailureHandler(fail);
+      if (esCat) r.setActivoCategoria(item.id, !item.activo);
+      else r.setActivoMedio(item.id, !item.activo);
+    }
+
+    function renderMaestros() {
+      var esCat = masterActual === 'categorias';
+      var items = esCat ? maestros.categorias : maestros.medios;
+      // Orden: activos primero, luego por etiqueta.
+      var lista = items.slice().sort(function (a, b) {
+        if (a.activo !== b.activo) return a.activo ? -1 : 1;
+        var la = esCat ? (a.categoria + a.subcategoria) : a.entidad;
+        var lb = esCat ? (b.categoria + b.subcategoria) : b.entidad;
+        return String(la).localeCompare(String(lb), 'es', { sensitivity: 'base' });
+      });
+
+      var activos = items.filter(function (i) { return i.activo; }).length;
+      el.mResumen.textContent = items.length + (items.length === 1 ? ' registro' : ' registros') + ' · ' + activos + ' activos';
+
+      if (!lista.length) { el.mList.innerHTML = '<p class="muted">No hay registros.</p>'; return; }
+
+      var frag = document.createDocumentFragment();
+      lista.forEach(function (it) {
+        var row = document.createElement('div');
+        row.className = 'gasto' + (it.activo ? '' : ' inactivo');
+
+        var main = document.createElement('div');
+        main.className = 'gasto-main';
+
+        var titulo = document.createElement('p');
+        titulo.className = 'gasto-desc';
+        titulo.textContent = esCat ? (it.categoria + (it.subcategoria ? ' › ' + it.subcategoria : '')) : it.entidad;
+        if (!it.activo) {
+          var off = document.createElement('span');
+          off.className = 'badge-off'; off.textContent = 'inactivo';
+          titulo.appendChild(off);
+        }
+
+        var meta = document.createElement('div');
+        meta.className = 'gasto-meta';
+        meta.textContent = esCat ? it.tipo : it.tipo_medio;
+
+        var acc = document.createElement('div');
+        acc.className = 'gasto-acciones';
+        var bEd = document.createElement('button');
+        bEd.className = 'icon-btn'; bEd.type = 'button'; bEd.textContent = '✎ Editar';
+        bEd.addEventListener('click', function () { abrirEditor(it); });
+        var bTog = document.createElement('button');
+        bTog.type = 'button';
+        bTog.className = 'icon-btn ' + (it.activo ? 'danger' : 'ok');
+        bTog.textContent = it.activo ? '⦸ Desactivar' : '✓ Activar';
+        bTog.addEventListener('click', function () { toggleActivoMaestro(it); });
+        acc.appendChild(bEd); acc.appendChild(bTog);
+
+        main.appendChild(titulo); main.appendChild(meta); main.appendChild(acc);
+        row.appendChild(main);
+        frag.appendChild(row);
+      });
+      el.mList.innerHTML = '';
+      el.mList.appendChild(frag);
+    }
+
+    function cargarMaestros() {
+      el.mResumen.textContent = 'Cargando…';
+      el.mList.innerHTML = '';
+      cerrarEditor();
+      google.script.run
+        .withSuccessHandler(function (res) {
+          if (!res || !res.ok) { el.mResumen.textContent = '✗ ' + ((res && res.error) || 'Error al cargar.'); return; }
+          maestros.categorias = res.data.categorias || [];
+          maestros.medios = res.data.medios || [];
+          refrescarDatalists();
+          renderMaestros();
+        })
+        .withFailureHandler(function (err) {
+          el.mResumen.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
+        })
+        .getMaestros();
+    }
+
+    function switchMaster(m) {
+      masterActual = m;
+      var subs = document.querySelectorAll('.subtab');
+      for (var i = 0; i < subs.length; i++) subs[i].classList.toggle('active', subs[i].getAttribute('data-master') === m);
+      cerrarEditor();
+      renderMaestros();
+    }
+
     // ---- Carga inicial ----
     function cargarCatalogos() {
       google.script.run
@@ -474,6 +675,14 @@
     el.hMedio.addEventListener('change', cargarHistorial);
     el.hLimpiar.addEventListener('click', limpiarFiltros);
 
+    el.mNuevo.addEventListener('click', function () { abrirEditor(null); });
+    el.mCancel.addEventListener('click', cerrarEditor);
+    el.mSave.addEventListener('click', guardarMaestro);
+    var subBtns = document.querySelectorAll('.subtab');
+    for (var s = 0; s < subBtns.length; s++) {
+      subBtns[s].addEventListener('click', function () { switchMaster(this.getAttribute('data-master')); });
+    }
+
     attachPicker(el.fecha);
     attachPicker(el.hDesde);
     attachPicker(el.hHasta);
@@ -483,6 +692,7 @@
       tabBtns[i].addEventListener('click', function () {
         var v = this.getAttribute('data-view');
         if (v === 'form') { enterCreateMode(); showView('form'); }
+        else if (v === 'maestros') { showView('maestros'); cargarMaestros(); }
         else { showView('historial'); cargarHistorial(); }
       });
     }

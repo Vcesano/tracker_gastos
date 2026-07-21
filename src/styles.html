@@ -239,6 +239,48 @@
     padding: 4px;
   }
   .icon-btn.danger { color: var(--err); }
+  .icon-btn.ok { color: var(--ok); }
+
+  .gasto.inactivo { opacity: 0.5; }
+  .badge-off {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: var(--muted);
+    background: rgba(154, 160, 172, 0.15);
+    border-radius: 6px;
+    padding: 1px 6px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+
+  /* --- Subtabs (Maestros) --- */
+  .subtabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .subtab {
+    flex: 1;
+    min-height: 40px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--muted);
+    background: var(--field);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .subtab.active { color: var(--text); border-color: var(--accent); }
+
+  /* --- Editor inline (ABM) --- */
+  .editor {
+    border: 1px solid var(--accent);
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+  .editor-title { font-size: 1rem; margin: 0 0 12px; }
 
   /* --- Toast --- */
   .toast {
