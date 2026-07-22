@@ -51,3 +51,25 @@ function validarMedio_(payload, idExcluir) {
 
   return { ok: true, data: { tipo_medio: tipoMedio, entidad: entidad } };
 }
+
+/**
+ * Cuenta cuántos registros (gastos + compras a crédito) referencian una
+ * categoría. Se usa para decidir si se puede borrar físicamente: si hay
+ * referencias, el borrado rompería la integridad → solo se permite desactivar.
+ */
+function contarRefsCategoria_(id) {
+  id = String(id || '');
+  var n = 0;
+  leerTabla_('Gastos').forEach(function (g) { if (String(g.categoria_id) === id) n++; });
+  leerTabla_('ComprasCredito').forEach(function (c) { if (String(c.categoria_id) === id) n++; });
+  return n;
+}
+
+/** Idem para medios de pago (referenciados en Gastos y ComprasCredito). */
+function contarRefsMedio_(id) {
+  id = String(id || '');
+  var n = 0;
+  leerTabla_('Gastos').forEach(function (g) { if (String(g.medio_pago_id) === id) n++; });
+  leerTabla_('ComprasCredito').forEach(function (c) { if (String(c.medio_pago_id) === id) n++; });
+  return n;
+}

@@ -9,6 +9,7 @@
     <main class="app">
       <header class="topbar">
         <h1>Gastos</h1>
+        <button type="button" id="btn-refresh" class="link" title="Actualizar datos" hidden>↻ Actualizar</button>
       </header>
 
       <nav class="tabs" id="tabs" hidden>
@@ -157,6 +158,22 @@
         </div>
 
         <button type="button" id="m-nuevo" class="btn">➕ Agregar</button>
+
+        <div class="filtros-row">
+          <label class="field">
+            <span>Buscar</span>
+            <input type="text" id="m-buscar" placeholder="Filtrar por nombre…">
+          </label>
+          <label class="field">
+            <span>Estado</span>
+            <select id="m-estado">
+              <option value="activos" selected>Activos</option>
+              <option value="inactivos">Inactivos</option>
+              <option value="todos">Todos</option>
+            </select>
+          </label>
+        </div>
+
         <p class="muted" id="m-resumen"></p>
         <div id="m-list"></div>
 

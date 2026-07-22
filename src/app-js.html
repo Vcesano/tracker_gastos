@@ -13,6 +13,7 @@
 
     var el = {
       tabs: $('tabs'),
+      btnRefresh: $('btn-refresh'),
       loadingCard: $('loading-card'),
       loadingStatus: $('loading-status'),
       // form
@@ -55,6 +56,8 @@
       mSave: $('m-save'),
       mCancel: $('m-cancel'),
       mNuevo: $('m-nuevo'),
+      mBuscar: $('m-buscar'),
+      mEstado: $('m-estado'),
       mResumen: $('m-resumen'),
       mList: $('m-list'),
       dlTipos: $('dl-tipos'),
@@ -254,7 +257,9 @@
     }
 
     // ---- Navegación ----
+    var viewActual = 'form';
     function showView(v) {
+      viewActual = v;
       var secs = document.querySelectorAll('.view');
       for (var i = 0; i < secs.length; i++) secs[i].hidden = secs[i].getAttribute('data-view') !== v;
       var tabs = document.querySelectorAll('.tab');
@@ -489,6 +494,7 @@
           toast('✓ Guardado', 'ok');
           cerrarEditor();
           cargarMaestros();
+          refrescarCatalogos();
         } else {
           toast('✗ ' + ((res && res.error) || 'No se pudo guardar.'), 'err');
         }
@@ -521,7 +527,7 @@
       var accion = item.activo ? 'desactivar' : 'activar';
       if (!window.confirm('¿Seguro que querés ' + accion + ' este maestro?')) return;
       function done(res) {
-        if (res && res.ok) { toast('✓ Actualizado', 'ok'); cargarMaestros(); }
+        if (res && res.ok) { toast('✓ Actualizado', 'ok'); cargarMaestros(); refrescarCatalogos(); }
         else { toast('✗ ' + ((res && res.error) || 'No se pudo actualizar.'), 'err'); }
       }
       function fail(err) { toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err'); }
@@ -530,11 +536,40 @@
       else r.setActivoMedio(item.id, !item.activo);
     }
 
+    // Borrado físico: el server solo lo permite si no hay referencias; si las
+    // hay, devuelve un error que sugiere desactivar (lo mostramos tal cual).
+    function eliminarMaestro(item) {
+      var esCat = masterActual === 'categorias';
+      var etiqueta = esCat ? (item.categoria + (item.subcategoria ? ' › ' + item.subcategoria : '')) : item.entidad;
+      if (!window.confirm('¿Eliminar definitivamente "' + etiqueta + '"?\nSolo se puede si ningún gasto o compra lo usa.')) return;
+      function done(res) {
+        if (res && res.ok) { toast('✓ Eliminado', 'ok'); cargarMaestros(); refrescarCatalogos(); }
+        else { toast('✗ ' + ((res && res.error) || 'No se pudo eliminar.'), 'err'); }
+      }
+      function fail(err) { toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err'); }
+      var r = google.script.run.withSuccessHandler(done).withFailureHandler(fail);
+      if (esCat) r.borrarCategoria(item.id); else r.borrarMedio(item.id);
+    }
+
+    // Filtra por texto libre y por estado (activos | inactivos | todos).
+    function filtrarMaestros(items) {
+      var esCat = masterActual === 'categorias';
+      var q = (el.mBuscar.value || '').trim().toLowerCase();
+      var estado = el.mEstado.value;
+      return items.filter(function (it) {
+        if (estado === 'activos' && !it.activo) return false;
+        if (estado === 'inactivos' && it.activo) return false;
+        if (!q) return true;
+        var hay = esCat ? (it.tipo + ' ' + it.categoria + ' ' + it.subcategoria) : (it.tipo_medio + ' ' + it.entidad);
+        return hay.toLowerCase().indexOf(q) >= 0;
+      });
+    }
+
     function renderMaestros() {
       var esCat = masterActual === 'categorias';
       var items = esCat ? maestros.categorias : maestros.medios;
-      // Orden: activos primero, luego por etiqueta.
-      var lista = items.slice().sort(function (a, b) {
+      var lista = filtrarMaestros(items).sort(function (a, b) {
+        // Orden: activos primero, luego por etiqueta.
         if (a.activo !== b.activo) return a.activo ? -1 : 1;
         var la = esCat ? (a.categoria + a.subcategoria) : a.entidad;
         var lb = esCat ? (b.categoria + b.subcategoria) : b.entidad;
@@ -542,9 +577,10 @@
       });
 
       var activos = items.filter(function (i) { return i.activo; }).length;
-      el.mResumen.textContent = items.length + (items.length === 1 ? ' registro' : ' registros') + ' · ' + activos + ' activos';
+      el.mResumen.textContent = lista.length + ' de ' + items.length +
+        ' · ' + activos + ' activos';
 
-      if (!lista.length) { el.mList.innerHTML = '<p class="muted">No hay registros.</p>'; return; }
+      if (!lista.length) { el.mList.innerHTML = '<p class="muted">No hay registros con ese filtro.</p>'; return; }
 
       var frag = document.createDocumentFragment();
       lista.forEach(function (it) {
@@ -577,7 +613,12 @@
         bTog.className = 'icon-btn ' + (it.activo ? 'danger' : 'ok');
         bTog.textContent = it.activo ? '⦸ Desactivar' : '✓ Activar';
         bTog.addEventListener('click', function () { toggleActivoMaestro(it); });
-        acc.appendChild(bEd); acc.appendChild(bTog);
+        var bDel = document.createElement('button');
+        bDel.type = 'button';
+        bDel.className = 'icon-btn danger';
+        bDel.textContent = '🗑 Eliminar';
+        bDel.addEventListener('click', function () { eliminarMaestro(it); });
+        acc.appendChild(bEd); acc.appendChild(bTog); acc.appendChild(bDel);
 
         main.appendChild(titulo); main.appendChild(meta); main.appendChild(acc);
         row.appendChild(main);
@@ -613,6 +654,41 @@
       renderMaestros();
     }
 
+    // Reconstruye los globals y los selects que dependen de los catálogos
+    // (form de gasto + filtros del historial) desde datos frescos del server.
+    // fillFiltro preserva la selección actual, así un refresh no la pisa.
+    function reconstruirDesdeCatalogos(data) {
+      categorias = data.categorias || [];
+      medios = data.medios || [];
+      optTipos = distinct(categorias.map(function (c) { return c.tipo; }))
+        .map(function (t) { return { value: t, label: t }; });
+      optTiposMedio = distinct(
+        medios.map(function (m) { return m.tipo_medio; }).filter(function (t) { return t !== 'Credito'; })
+      ).map(function (t) { return { value: t, label: t }; });
+
+      var catFiltro = distinct(categorias.map(function (c) { return c.categoria; }))
+        .map(function (cat) { return { value: cat, label: cat }; });
+      fillFiltro(el.hCategoria, catFiltro, 'Todo seleccionado', true);
+      // Medios sin crédito: no se usan para pagar gastos.
+      var medFiltro = medios.filter(function (m) { return m.tipo_medio !== 'Credito'; })
+        .map(function (m) { return { value: m.id, label: m.entidad }; });
+      fillFiltro(el.hMedio, medFiltro, 'Todo seleccionado', true);
+    }
+
+    // Re-lee catálogos en caliente (tras un cambio de ABM o al tocar Actualizar)
+    // para que el form y los filtros reflejen altas/bajas sin recargar la página.
+    function refrescarCatalogos(onDone) {
+      google.script.run
+        .withSuccessHandler(function (res) {
+          if (res && res.ok) reconstruirDesdeCatalogos(res.data);
+          if (onDone) onDone(res);
+        })
+        .withFailureHandler(function (err) {
+          if (onDone) onDone({ ok: false, error: err && err.message ? err.message : String(err) });
+        })
+        .getCatalogos();
+    }
+
     // ---- Carga inicial ----
     function cargarCatalogos() {
       google.script.run
@@ -622,33 +698,19 @@
             el.loadingStatus.className = 'err';
             return;
           }
-          categorias = res.data.categorias || [];
-          medios = res.data.medios || [];
-          if (!categorias.length || !medios.length) {
+          if (!(res.data.categorias || []).length || !(res.data.medios || []).length) {
             el.loadingStatus.textContent = '✗ Faltan categorías o medios de pago activos en la Sheet.';
             el.loadingStatus.className = 'err';
             return;
           }
 
-          optTipos = distinct(categorias.map(function (c) { return c.tipo; }))
-            .map(function (t) { return { value: t, label: t }; });
-          optTiposMedio = distinct(
-            medios.map(function (m) { return m.tipo_medio; }).filter(function (t) { return t !== 'Credito'; })
-          ).map(function (t) { return { value: t, label: t }; });
-
-          // Filtros del historial (se llenan una vez).
-          var catFiltro = distinct(categorias.map(function (c) { return c.categoria; }))
-            .map(function (cat) { return { value: cat, label: cat }; });
-          fillFiltro(el.hCategoria, catFiltro, 'Todo seleccionado', true);
+          reconstruirDesdeCatalogos(res.data);
           fillFiltro(el.hSubcategoria, [], 'Todo seleccionado', true);
-          // Medios sin crédito: no se usan para pagar gastos.
-          var medFiltro = medios.filter(function (m) { return m.tipo_medio !== 'Credito'; })
-            .map(function (m) { return { value: m.id, label: m.entidad }; });
-          fillFiltro(el.hMedio, medFiltro, 'Todo seleccionado', true);
 
           enterCreateMode();
           el.loadingCard.hidden = true;
           el.tabs.hidden = false;
+          el.btnRefresh.hidden = false;
           showView('form');
         })
         .withFailureHandler(function (err) {
@@ -678,6 +740,8 @@
     el.mNuevo.addEventListener('click', function () { abrirEditor(null); });
     el.mCancel.addEventListener('click', cerrarEditor);
     el.mSave.addEventListener('click', guardarMaestro);
+    el.mBuscar.addEventListener('input', renderMaestros);
+    el.mEstado.addEventListener('change', renderMaestros);
     var subBtns = document.querySelectorAll('.subtab');
     for (var s = 0; s < subBtns.length; s++) {
       subBtns[s].addEventListener('click', function () { switchMaster(this.getAttribute('data-master')); });
@@ -686,6 +750,21 @@
     attachPicker(el.fecha);
     attachPicker(el.hDesde);
     attachPicker(el.hHasta);
+
+    // Botón global: re-sincroniza catálogos y recarga la vista actual.
+    el.btnRefresh.addEventListener('click', function () {
+      el.btnRefresh.disabled = true;
+      refrescarCatalogos(function (res) {
+        el.btnRefresh.disabled = false;
+        if (res && res.ok) {
+          toast('✓ Datos actualizados', 'ok');
+          if (viewActual === 'historial') cargarHistorial();
+          else if (viewActual === 'maestros') cargarMaestros();
+        } else {
+          toast('✗ ' + ((res && res.error) || 'No se pudo actualizar.'), 'err');
+        }
+      });
+    });
 
     var tabBtns = document.querySelectorAll('.tab');
     for (var i = 0; i < tabBtns.length; i++) {

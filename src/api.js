@@ -282,6 +282,27 @@ function actualizarCategoria(id, payload) {
   }
 }
 
+/**
+ * Borra FÍSICAMENTE una categoría, pero solo si ningún gasto o compra la
+ * referencia. Si hay referencias, se niega y sugiere desactivar (mantiene la
+ * integridad: no dejar FKs huérfanas). Pensado para limpiar altas de prueba.
+ */
+function borrarCategoria(id) {
+  try {
+    id = String(id || '').trim();
+    if (!id) return { ok: false, error: 'Falta el id de la categoría.' };
+    var refs = contarRefsCategoria_(id);
+    if (refs > 0) {
+      return { ok: false, error: 'No se puede eliminar: ' + refs + ' registro(s) la usan. Desactivala en su lugar.' };
+    }
+    var ok = borrarFila_('Categorias', id);
+    if (!ok) return { ok: false, error: 'No se encontró la categoría.' };
+    return { ok: true, data: { id: id } };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
 /** Baja/alta lógica de una categoría (activo TRUE/FALSE). Nunca borra. */
 function setActivoCategoria(id, activo) {
   try {
@@ -314,6 +335,26 @@ function actualizarMedio(id, payload) {
     var v = validarMedio_(payload, id);
     if (!v.ok) return v;
     var ok = actualizarFila_('MediosPago', id, { tipo_medio: v.data.tipo_medio, entidad: v.data.entidad });
+    if (!ok) return { ok: false, error: 'No se encontró el medio de pago.' };
+    return { ok: true, data: { id: id } };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Borra FÍSICAMENTE un medio de pago, solo si ningún gasto o compra lo usa.
+ * Si hay referencias, se niega y sugiere desactivar.
+ */
+function borrarMedio(id) {
+  try {
+    id = String(id || '').trim();
+    if (!id) return { ok: false, error: 'Falta el id del medio.' };
+    var refs = contarRefsMedio_(id);
+    if (refs > 0) {
+      return { ok: false, error: 'No se puede eliminar: ' + refs + ' registro(s) lo usan. Desactivalo en su lugar.' };
+    }
+    var ok = borrarFila_('MediosPago', id);
     if (!ok) return { ok: false, error: 'No se encontró el medio de pago.' };
     return { ok: true, data: { id: id } };
   } catch (e) {
