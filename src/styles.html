@@ -2,9 +2,12 @@
   :root {
     --bg: #0f1115;
     --card: #1a1d24;
+    --field: #12151b;
+    --border: #2a2f3a;
     --text: #e7e9ee;
     --muted: #9aa0ac;
     --accent: #4c8bf5;
+    --accent-press: #3b73d1;
     --ok: #2ecc71;
     --err: #e74c3c;
     --radius: 14px;
@@ -12,6 +15,10 @@
   }
 
   * { box-sizing: border-box; }
+
+  /* El atributo hidden debe ganar siempre, aun sobre reglas de clase con
+     display (.tabs / .edit-banner usan flex). */
+  [hidden] { display: none !important; }
 
   html, body {
     margin: 0;
@@ -30,6 +37,12 @@
     padding-bottom: max(var(--pad), env(safe-area-inset-bottom));
   }
 
+  .topbar {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+  }
   .topbar h1 {
     font-size: 1.4rem;
     margin: 8px 0 16px;
@@ -42,8 +55,254 @@
     margin-bottom: 16px;
   }
 
-  .muted { color: var(--muted); font-size: 0.85rem; margin: 0 0 8px; }
+  .card-title {
+    font-size: 1.05rem;
+    margin: 0 0 14px;
+  }
 
+  .muted { color: var(--muted); font-size: 0.85rem; }
   .ok { color: var(--ok); }
   .err { color: var(--err); }
+
+  /* --- Tabs --- */
+  .tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .tab {
+    flex: 1;
+    min-height: 44px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--muted);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .tab.active {
+    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+
+  /* --- Form --- */
+  .field {
+    display: block;
+    margin-bottom: 14px;
+  }
+  .field > span {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .field .opt { font-style: normal; color: var(--muted); opacity: 0.7; }
+
+  input, select {
+    width: 100%;
+    font-size: 1.05rem;
+    color: var(--text);
+    background: var(--field);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 13px 12px;
+    min-height: 48px;
+    appearance: none;
+    -webkit-appearance: none;
+  }
+  input:focus, select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  select:disabled { opacity: 0.5; }
+
+  .row {
+    display: flex;
+    gap: 12px;
+  }
+  .field-monto { flex: 2; }
+  .field-moneda { flex: 1; }
+
+  .btn {
+    width: 100%;
+    min-height: 52px;
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: #fff;
+    background: var(--accent);
+    border: none;
+    border-radius: 12px;
+    padding: 14px;
+    margin-top: 4px;
+    cursor: pointer;
+  }
+  .btn:active { background: var(--accent-press); }
+  .btn:disabled { opacity: 0.6; cursor: default; }
+
+  .btn-sec {
+    width: 100%;
+    min-height: 48px;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--muted);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+    margin-top: 10px;
+    cursor: pointer;
+  }
+  .btn-sec:active { background: rgba(255, 255, 255, 0.04); }
+
+  .hist-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .link {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-size: 0.9rem;
+    cursor: pointer;
+    padding: 4px 0;
+  }
+
+  /* --- Banner de edición --- */
+  .edit-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(76, 139, 245, 0.12);
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    padding: 8px 12px;
+    margin-bottom: 12px;
+    font-size: 0.9rem;
+  }
+
+  /* --- Filtros del historial (2 filas: fechas arriba, selects abajo) --- */
+  .filtros { margin-bottom: 12px; }
+  .filtros-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .filtros-row:last-child { margin-bottom: 0; }
+  .filtros-row .field {
+    flex: 1;
+    min-width: 0;
+    margin-bottom: 0;
+  }
+
+  /* --- Lista de gastos --- */
+  .gasto {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 0;
+    border-top: 1px solid var(--border);
+  }
+  .gasto:first-child { border-top: none; }
+  .gasto-main { flex: 1; min-width: 0; }
+  .gasto-desc {
+    font-size: 0.98rem;
+    margin: 0 0 3px;
+    word-break: break-word;
+  }
+  .gasto-meta { font-size: 0.8rem; color: var(--muted); }
+  .gasto-side {
+    text-align: right;
+    white-space: nowrap;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+  }
+  .gasto-monto { font-size: 1rem; font-weight: 600; }
+  .badge {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: #cdb24a;
+    background: rgba(205, 178, 74, 0.15);
+    border-radius: 6px;
+    padding: 1px 6px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .gasto-acciones { display: flex; gap: 10px; }
+  .icon-btn {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 0.85rem;
+    cursor: pointer;
+    padding: 4px;
+  }
+  .icon-btn.danger { color: var(--err); }
+  .icon-btn.ok { color: var(--ok); }
+
+  .gasto.inactivo { opacity: 0.5; }
+  .badge-off {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: var(--muted);
+    background: rgba(154, 160, 172, 0.15);
+    border-radius: 6px;
+    padding: 1px 6px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+
+  /* --- Subtabs (Maestros) --- */
+  .subtabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .subtab {
+    flex: 1;
+    min-height: 40px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--muted);
+    background: var(--field);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .subtab.active { color: var(--text); border-color: var(--accent); }
+
+  /* --- Editor inline (ABM) --- */
+  .editor {
+    border: 1px solid var(--accent);
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+  .editor-title { font-size: 1rem; margin: 0 0 12px; }
+
+  /* --- Toast --- */
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: max(20px, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    max-width: 90%;
+    padding: 12px 18px;
+    border-radius: 12px;
+    font-size: 0.95rem;
+    color: #fff;
+    background: #333;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+    z-index: 10;
+  }
+  .toast.ok  { background: #1e7e46; color: #fff; }
+  .toast.err { background: #a02820; color: #fff; }
 </style>

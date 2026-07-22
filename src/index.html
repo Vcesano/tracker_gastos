@@ -9,12 +9,184 @@
     <main class="app">
       <header class="topbar">
         <h1>Gastos</h1>
+        <button type="button" id="btn-refresh" class="link" title="Actualizar datos" hidden>↻ Actualizar</button>
       </header>
 
-      <section class="card" id="estado">
-        <p class="muted">Andamiaje It 0</p>
-        <p id="ping-status">Verificando conexión con el servidor…</p>
+      <nav class="tabs" id="tabs" hidden>
+        <button type="button" class="tab active" data-view="form">Cargar</button>
+        <button type="button" class="tab" data-view="historial">Historial</button>
+        <button type="button" class="tab" data-view="maestros">Maestros</button>
+      </nav>
+
+      <!-- ===== Vista: Cargar / Editar ===== -->
+      <section class="card view" id="form-card" data-view="form" hidden>
+        <div class="edit-banner" id="edit-banner" hidden>
+          <span>Editando un gasto</span>
+          <button type="button" id="edit-cancel" class="link">Cancelar</button>
+        </div>
+        <h2 class="card-title" id="form-title">Nuevo gasto</h2>
+        <form id="form-gasto" autocomplete="off" novalidate>
+          <label class="field">
+            <span>Fecha</span>
+            <input type="date" id="f-fecha" required>
+          </label>
+
+          <label class="field">
+            <span>Tipo</span>
+            <select id="f-tipo" required></select>
+          </label>
+
+          <label class="field">
+            <span>Categoría</span>
+            <select id="f-categoria" required disabled></select>
+          </label>
+
+          <label class="field">
+            <span>Subcategoría</span>
+            <select id="f-subcategoria" required disabled></select>
+          </label>
+
+          <label class="field">
+            <span>Tipo de medio</span>
+            <select id="f-tipomedio" required></select>
+          </label>
+
+          <label class="field">
+            <span>Medio de pago</span>
+            <select id="f-medio" required disabled></select>
+          </label>
+
+          <div class="row">
+            <label class="field field-monto">
+              <span>Monto</span>
+              <input type="text" id="f-monto" inputmode="decimal" placeholder="0" required>
+            </label>
+            <label class="field field-moneda">
+              <span>Moneda</span>
+              <select id="f-moneda">
+                <option value="ARS" selected>ARS</option>
+                <option value="USD">USD</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Descripción <em class="opt">(opcional)</em></span>
+            <input type="text" id="f-descripcion" maxlength="140" placeholder="Ej: Súper del sábado">
+          </label>
+
+          <button type="submit" id="f-submit" class="btn">Guardar gasto</button>
+          <button type="button" id="f-limpiar" class="btn-sec">Limpiar</button>
+        </form>
       </section>
+
+      <!-- ===== Vista: Historial ===== -->
+      <section class="card view" id="historial-card" data-view="historial" hidden>
+        <div class="hist-head">
+          <h2 class="card-title">Historial</h2>
+          <button type="button" id="h-limpiar" class="link">Limpiar filtros</button>
+        </div>
+        <div class="filtros">
+          <div class="filtros-row">
+            <label class="field">
+              <span>Desde</span>
+              <input type="date" id="h-desde">
+            </label>
+            <label class="field">
+              <span>Hasta</span>
+              <input type="date" id="h-hasta">
+            </label>
+          </div>
+          <div class="filtros-row">
+            <label class="field">
+              <span>Categoría</span>
+              <select id="h-categoria"></select>
+            </label>
+            <label class="field">
+              <span>Subcategoría</span>
+              <select id="h-subcategoria" disabled></select>
+            </label>
+            <label class="field">
+              <span>Medio de pago</span>
+              <select id="h-medio"></select>
+            </label>
+          </div>
+        </div>
+        <p class="muted" id="hist-resumen"></p>
+        <div id="hist-list"></div>
+      </section>
+
+      <!-- ===== Vista: Maestros (ABM) ===== -->
+      <section class="card view" id="maestros-card" data-view="maestros" hidden>
+        <h2 class="card-title">Maestros</h2>
+        <div class="subtabs">
+          <button type="button" class="subtab active" data-master="categorias">Categorías</button>
+          <button type="button" class="subtab" data-master="medios">Medios de pago</button>
+        </div>
+
+        <div class="editor" id="m-editor" hidden>
+          <h3 class="editor-title" id="m-editor-title">Nueva categoría</h3>
+
+          <div id="m-fields-cat">
+            <label class="field">
+              <span>Tipo</span>
+              <input type="text" id="m-cat-tipo" list="dl-tipos" placeholder="Diario / Mensual">
+            </label>
+            <label class="field">
+              <span>Categoría</span>
+              <input type="text" id="m-cat-categoria" list="dl-categorias" maxlength="60">
+            </label>
+            <label class="field">
+              <span>Subcategoría <em class="opt">(opcional)</em></span>
+              <input type="text" id="m-cat-subcategoria" maxlength="60">
+            </label>
+          </div>
+
+          <div id="m-fields-med" hidden>
+            <label class="field">
+              <span>Tipo de medio</span>
+              <input type="text" id="m-med-tipo" list="dl-tipomedios" placeholder="Efectivo / Debito - Transferencia / Credito">
+            </label>
+            <label class="field">
+              <span>Entidad <em class="opt">(nombre visible)</em></span>
+              <input type="text" id="m-med-entidad" maxlength="80">
+            </label>
+          </div>
+
+          <button type="button" id="m-save" class="btn">Guardar</button>
+          <button type="button" id="m-cancel" class="btn-sec">Cancelar</button>
+        </div>
+
+        <button type="button" id="m-nuevo" class="btn">➕ Agregar</button>
+
+        <div class="filtros-row">
+          <label class="field">
+            <span>Buscar</span>
+            <input type="text" id="m-buscar" placeholder="Filtrar por nombre…">
+          </label>
+          <label class="field">
+            <span>Estado</span>
+            <select id="m-estado">
+              <option value="activos" selected>Activos</option>
+              <option value="inactivos">Inactivos</option>
+              <option value="todos">Todos</option>
+            </select>
+          </label>
+        </div>
+
+        <p class="muted" id="m-resumen"></p>
+        <div id="m-list"></div>
+
+        <datalist id="dl-tipos"></datalist>
+        <datalist id="dl-categorias"></datalist>
+        <datalist id="dl-tipomedios"></datalist>
+      </section>
+
+      <section class="card" id="loading-card">
+        <p id="loading-status">Cargando catálogos…</p>
+      </section>
+
+      <div id="toast" class="toast" hidden></div>
     </main>
 
     <?!= include('app-js'); ?>
