@@ -86,6 +86,11 @@
       cFiltroEstado: $('c-filtro-estado'),
       cResumen: $('c-resumen'),
       cList: $('c-list'),
+      credCompras: $('cred-compras'),
+      credPendientes: $('cred-pendientes'),
+      pTarjeta: $('p-tarjeta'),
+      pResumen: $('p-resumen'),
+      pList: $('p-list'),
       // resumen de tarjeta (batch)
       rConfig: $('r-config'),
       rTarjeta: $('r-tarjeta'),
@@ -899,6 +904,103 @@
         .listarCompras(filtros);
     }
 
+    // ---- Cuotas pendientes (subvista de Crédito, slice 2c) ----
+    var credSubActual = 'compras';   // 'compras' | 'pendientes'
+
+    function switchCredSub(sub) {
+      credSubActual = sub;
+      var btns = document.querySelectorAll('.subtab[data-credsub]');
+      for (var i = 0; i < btns.length; i++) {
+        btns[i].classList.toggle('active', btns[i].getAttribute('data-credsub') === sub);
+      }
+      var esComp = sub === 'compras';
+      el.credCompras.hidden = !esComp;
+      el.credPendientes.hidden = esComp;
+      if (esComp) cargarCompras(); else cargarPendientes();
+    }
+
+    function renderPendientes(compras) {
+      el.pResumen.textContent = compras.length +
+        (compras.length === 1 ? ' compra con cuotas pendientes' : ' compras con cuotas pendientes');
+      if (!compras.length) { el.pList.innerHTML = '<p class="muted">No hay cuotas pendientes con ese filtro.</p>'; return; }
+
+      // Agrupar por tarjeta (medio_pago_id). Total restante estimado por moneda
+      // (pendientes × cuota teórica); nunca se suman monedas distintas.
+      var groups = {}, order = [];
+      compras.forEach(function (c) {
+        var k = c.medio_pago_id;
+        if (!groups[k]) { groups[k] = { label: c.tarjeta_label, items: [], totales: {} }; order.push(k); }
+        groups[k].items.push(c);
+        groups[k].totales[c.moneda] = (groups[k].totales[c.moneda] || 0) + c.pendientes * c.monto_cuota_teorico;
+      });
+
+      var frag = document.createDocumentFragment();
+      order.forEach(function (k) {
+        var g = groups[k];
+        var box = document.createElement('div');
+        box.className = 'pgroup';
+
+        var head = document.createElement('div');
+        head.className = 'pgroup-head';
+        var tarj = document.createElement('span');
+        tarj.className = 'pgroup-tarjeta';
+        tarj.textContent = g.label || '(tarjeta)';
+        var tot = document.createElement('span');
+        tot.className = 'pgroup-total';
+        tot.innerHTML = Object.keys(g.totales).map(function (m) {
+          return 'Resta <strong>' + fmtMoneda(g.totales[m], m) + '</strong>';
+        }).join(' · ');
+        head.appendChild(tarj); head.appendChild(tot);
+        box.appendChild(head);
+
+        g.items.forEach(function (c) {
+          var row = document.createElement('div');
+          row.className = 'gasto';
+          var main = document.createElement('div');
+          main.className = 'gasto-main';
+          var desc = document.createElement('p');
+          desc.className = 'gasto-desc';
+          desc.textContent = c.descripcion || '(sin descripción)';
+          var badge = document.createElement('span');
+          badge.className = 'badge';
+          badge.textContent = 'próx. ' + (c.pagadas + 1) + '/' + c.n_cuotas;
+          desc.appendChild(badge);
+          var meta = document.createElement('div');
+          meta.className = 'gasto-meta';
+          meta.textContent = c.pendientes + (c.pendientes === 1 ? ' cuota restante' : ' cuotas restantes') +
+            ' · ' + fmtMoneda(c.monto_cuota_teorico, c.moneda) + '/cuota';
+          main.appendChild(desc); main.appendChild(meta);
+
+          var side = document.createElement('div');
+          side.className = 'gasto-side';
+          var monto = document.createElement('span');
+          monto.className = 'gasto-monto';
+          monto.textContent = fmtMoneda(c.pendientes * c.monto_cuota_teorico, c.moneda);
+          side.appendChild(monto);
+
+          row.appendChild(main); row.appendChild(side);
+          box.appendChild(row);
+        });
+        frag.appendChild(box);
+      });
+      el.pList.innerHTML = '';
+      el.pList.appendChild(frag);
+    }
+
+    function cargarPendientes() {
+      el.pResumen.textContent = 'Cargando…';
+      el.pList.innerHTML = '';
+      google.script.run
+        .withSuccessHandler(function (res) {
+          if (!res || !res.ok) { el.pResumen.textContent = '✗ ' + ((res && res.error) || 'Error al listar.'); return; }
+          renderPendientes(res.data.compras || []);
+        })
+        .withFailureHandler(function (err) {
+          el.pResumen.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
+        })
+        .listarCompras({ medio_pago_id: el.pTarjeta.value, estado: 'pendientes' });
+    }
+
     // ---- Resumen de tarjeta (batch, slice 2b) ----
     var rItems = [];        // filas activas de la grilla: { compra_credito_id, els:{...}, suelto }
     var rGenerando = false;
@@ -1186,6 +1288,7 @@
       var tarjFiltro = tarjetas.map(function (t) { return { value: t.id, label: t.entidad }; });
       fillFiltro(el.cFiltroTarjeta, tarjFiltro, 'Todas', true);
       fillFiltro(el.hTarjeta, tarjFiltro, 'Todas', true);
+      fillFiltro(el.pTarjeta, tarjFiltro, 'Todas', true);
 
       // Selects del resumen de tarjeta: tarjeta (crédito) y cuenta que paga
       // (medios NO crédito). fillFiltro preserva la selección en un refresh.
@@ -1277,6 +1380,11 @@
     el.cSave.addEventListener('click', guardarCompra);
     el.cFiltroTarjeta.addEventListener('change', cargarCompras);
     el.cFiltroEstado.addEventListener('change', cargarCompras);
+    el.pTarjeta.addEventListener('change', cargarPendientes);
+    var credSubBtns = document.querySelectorAll('.subtab[data-credsub]');
+    for (var cs = 0; cs < credSubBtns.length; cs++) {
+      credSubBtns[cs].addEventListener('click', function () { switchCredSub(this.getAttribute('data-credsub')); });
+    }
 
     el.rGenerar.addEventListener('click', generarGrilla);
     el.rReset.addEventListener('click', resetResumen);
@@ -1298,7 +1406,7 @@
           toast('✓ Datos actualizados', 'ok');
           if (viewActual === 'historial') cargarHistorial();
           else if (viewActual === 'maestros') cargarMaestros();
-          else if (viewActual === 'credito') cargarCompras();
+          else if (viewActual === 'credito') { if (credSubActual === 'pendientes') cargarPendientes(); else cargarCompras(); }
         } else {
           toast('✗ ' + ((res && res.error) || 'No se pudo actualizar.'), 'err');
         }
@@ -1311,7 +1419,7 @@
         var v = this.getAttribute('data-view');
         if (v === 'form') { enterCreateMode(); showView('form'); }
         else if (v === 'maestros') { showView('maestros'); cargarMaestros(); }
-        else if (v === 'credito') { showView('credito'); cargarCompras(); }
+        else if (v === 'credito') { showView('credito'); switchCredSub('compras'); }
         else if (v === 'resumen') { showView('resumen'); if (!el.rFecha.value) el.rFecha.value = hoyISO(); }
         else { showView('historial'); cargarHistorial(); }
       });

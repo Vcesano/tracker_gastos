@@ -134,8 +134,13 @@
 
       <!-- ===== Vista: Crédito (compras en cuotas) ===== -->
       <section class="card view" id="credito-card" data-view="credito" hidden>
-        <h2 class="card-title">Compras en cuotas</h2>
+        <h2 class="card-title">Crédito</h2>
+        <div class="subtabs">
+          <button type="button" class="subtab active" data-credsub="compras">Compras</button>
+          <button type="button" class="subtab" data-credsub="pendientes">Pendientes</button>
+        </div>
 
+        <div id="cred-compras">
         <div class="editor" id="c-editor" hidden>
           <h3 class="editor-title" id="c-editor-title">Nueva compra</h3>
 
@@ -214,6 +219,18 @@
 
         <p class="muted" id="c-resumen"></p>
         <div id="c-list"></div>
+        </div><!-- /cred-compras -->
+
+        <div id="cred-pendientes" hidden>
+          <div class="filtros-row">
+            <label class="field">
+              <span>Tarjeta</span>
+              <select id="p-tarjeta"></select>
+            </label>
+          </div>
+          <p class="muted" id="p-resumen"></p>
+          <div id="p-list"></div>
+        </div><!-- /cred-pendientes -->
       </section>
 
       <!-- ===== Vista: Resumen de tarjeta (batch) ===== -->
