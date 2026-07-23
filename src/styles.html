@@ -1,15 +1,34 @@
 <style>
+  /* =========================================================
+     Tema (It 3a) — dark, sobre la paleta de marca de Valentin:
+       #57CC99 (verde)  → accent: acciones primarias, activo, ok
+       #E06C9F (rosa)   → destructivo + badges de cuota
+       #1E3A5F (azul)   → superficies de énfasis (banners, cabeceras)
+       #EAEAEA (claro)  → texto
+       #222831 (grafito)→ cards; el fondo va un escalón más oscuro
+                           para que las cards se despeguen.
+     ========================================================= */
   :root {
-    --bg: #0f1115;
-    --card: #1a1d24;
-    --field: #12151b;
-    --border: #2a2f3a;
-    --text: #e7e9ee;
-    --muted: #9aa0ac;
-    --accent: #4c8bf5;
-    --accent-press: #3b73d1;
-    --ok: #2ecc71;
-    --err: #e74c3c;
+    --bg: #1b2027;
+    --card: #222831;
+    --field: #1a1f26;
+    --border: #333b47;
+    --text: #eaeaea;
+    --muted: #98a1ae;
+
+    --accent: #57cc99;
+    --accent-press: #45b184;
+    --accent-soft: rgba(87, 204, 153, 0.14);
+    --on-accent: #12181f;
+
+    --deep: #1e3a5f;
+    --deep-border: #2c5183;
+
+    --pink: #e06c9f;
+    --pink-soft: rgba(224, 108, 159, 0.15);
+
+    --ok: #57cc99;
+    --err: #e06c9f;
     --radius: 14px;
     --pad: 16px;
   }
@@ -19,6 +38,10 @@
   /* El atributo hidden debe ganar siempre, aun sobre reglas de clase con
      display (.tabs / .edit-banner usan flex). */
   [hidden] { display: none !important; }
+
+  /* Hace que los widgets nativos (lista desplegada de un select, calendario de
+     un input date, scrollbars) se rendericen en oscuro y no en blanco. */
+  html { color-scheme: dark; }
 
   html, body {
     margin: 0;
@@ -46,10 +69,12 @@
   .topbar h1 {
     font-size: 1.4rem;
     margin: 8px 0 16px;
+    letter-spacing: -0.01em;
   }
 
   .card {
     background: var(--card);
+    border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: var(--pad);
     margin-bottom: 16px;
@@ -83,11 +108,13 @@
     border-radius: 10px;
     cursor: pointer;
   }
+  .tab:hover { color: var(--text); border-color: var(--deep-border); }
   .tab.active {
-    color: #fff;
+    color: var(--on-accent);
     background: var(--accent);
     border-color: var(--accent);
   }
+  .tab.active:hover { color: var(--on-accent); border-color: var(--accent); }
 
   /* --- Form --- */
   .field {
@@ -117,8 +144,30 @@
   input:focus, select:focus {
     outline: none;
     border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-soft);
   }
   select:disabled { opacity: 0.5; }
+  ::placeholder { color: var(--muted); opacity: 0.7; }
+
+  /* Flecha ▾ propia: appearance:none borra la nativa. SVG inline (data-URI),
+     sin CDN. Aplica también a los inputs con datalist (Maestros), que también
+     se despliegan. */
+  select,
+  input[list] {
+    padding-right: 38px;
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.75 6 6.25 11 1.75' fill='none' stroke='%2398a1ae' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 13px center;
+    background-size: 12px 8px;
+  }
+  select:disabled { background-image: none; }
+
+  /* El ícono de calendario nativo es oscuro sobre fondo oscuro: lo invertimos. */
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+    opacity: 0.55;
+    cursor: pointer;
+  }
 
   /* El reset de arriba (appearance:none, width:100%) rompe los checkboxes:
      los restauramos a su render nativo. */
@@ -144,7 +193,7 @@
     min-height: 52px;
     font-size: 1.05rem;
     font-weight: 600;
-    color: #fff;
+    color: var(--on-accent);
     background: var(--accent);
     border: none;
     border-radius: 12px;
@@ -152,8 +201,10 @@
     margin-top: 4px;
     cursor: pointer;
   }
+  .btn:hover { background: var(--accent-press); }
   .btn:active { background: var(--accent-press); }
-  .btn:disabled { opacity: 0.6; cursor: default; }
+  .btn:disabled { opacity: 0.55; cursor: default; }
+  .btn:disabled:hover { background: var(--accent); }
 
   .btn-sec {
     width: 100%;
@@ -168,7 +219,13 @@
     margin-top: 10px;
     cursor: pointer;
   }
+  .btn-sec:hover { color: var(--text); border-color: var(--deep-border); }
   .btn-sec:active { background: rgba(255, 255, 255, 0.04); }
+
+  /* Separación entre un botón de acción (➕ Nueva compra / ➕ Agregar) y la
+     fila de filtros que viene abajo: quedaban pegados. */
+  .btn + .filtros-row,
+  .btn-sec + .filtros-row { margin-top: 22px; }
 
   .hist-head {
     display: flex;
@@ -185,14 +242,17 @@
     cursor: pointer;
     padding: 4px 0;
   }
+  .link:hover { color: var(--accent-press); }
+  .link:disabled { opacity: 0.55; cursor: default; }
 
   /* --- Banner de edición --- */
   .edit-banner {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    background: rgba(76, 139, 245, 0.12);
-    border: 1px solid var(--accent);
+    gap: 10px;
+    background: var(--deep);
+    border: 1px solid var(--deep-border);
     border-radius: 10px;
     padding: 8px 12px;
     margin-bottom: 12px;
@@ -242,8 +302,8 @@
     display: inline-block;
     font-size: 0.68rem;
     font-weight: 700;
-    color: #cdb24a;
-    background: rgba(205, 178, 74, 0.15);
+    color: var(--pink);
+    background: var(--pink-soft);
     border-radius: 6px;
     padding: 1px 6px;
     margin-left: 6px;
@@ -258,6 +318,7 @@
     cursor: pointer;
     padding: 4px;
   }
+  .icon-btn:hover { color: var(--text); }
   .icon-btn.danger { color: var(--err); }
   .icon-btn.ok { color: var(--ok); }
 
@@ -267,7 +328,7 @@
     font-size: 0.68rem;
     font-weight: 700;
     color: var(--muted);
-    background: rgba(154, 160, 172, 0.15);
+    background: rgba(152, 161, 174, 0.15);
     border-radius: 6px;
     padding: 1px 6px;
     margin-left: 6px;
@@ -285,11 +346,11 @@
   }
   .progress-bar {
     height: 100%;
-    background: var(--accent);
+    background: var(--pink);
     border-radius: 6px 0 0 6px;
     transition: width 0.2s ease;
   }
-  .progress-bar.done { background: var(--ok); }
+  .progress-bar.done { background: var(--accent); }
   .compra-prog {
     font-size: 0.8rem;
     color: var(--muted);
@@ -298,8 +359,8 @@
     display: inline-block;
     font-size: 0.68rem;
     font-weight: 700;
-    color: var(--ok);
-    background: rgba(46, 204, 113, 0.15);
+    color: var(--accent);
+    background: var(--accent-soft);
     border-radius: 6px;
     padding: 1px 6px;
     margin-left: 6px;
@@ -326,8 +387,8 @@
     display: inline-block;
     font-size: 0.72rem;
     font-weight: 700;
-    color: #cdb24a;
-    background: rgba(205, 178, 74, 0.15);
+    color: var(--pink);
+    background: var(--pink-soft);
     border-radius: 6px;
     padding: 1px 6px;
     margin-left: 6px;
@@ -377,11 +438,17 @@
     border-radius: 10px;
     cursor: pointer;
   }
-  .subtab.active { color: var(--text); border-color: var(--accent); }
+  .subtab:hover { color: var(--text); }
+  .subtab.active {
+    color: var(--text);
+    background: var(--deep);
+    border-color: var(--deep-border);
+  }
 
   /* --- Editor inline (ABM) --- */
   .editor {
-    border: 1px solid var(--accent);
+    border: 1px solid var(--deep-border);
+    background: rgba(30, 58, 95, 0.22);
     border-radius: 12px;
     padding: 14px;
     margin-bottom: 14px;
@@ -398,11 +465,109 @@
     padding: 12px 18px;
     border-radius: 12px;
     font-size: 0.95rem;
-    color: #fff;
-    background: #333;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+    color: var(--text);
+    background: #2c333e;
+    border: 1px solid var(--border);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
     z-index: 10;
   }
-  .toast.ok  { background: #1e7e46; color: #fff; }
-  .toast.err { background: #a02820; color: #fff; }
+  .toast.ok  { background: #1f6b52; border-color: #2c8a6b; color: #eafff5; }
+  .toast.err { background: #7d3253; border-color: #a34a72; color: #ffeef5; }
+
+  /* =========================================================
+     Desktop (It 3a): hasta acá todo es la vista mobile. A partir
+     de 900px la app usa el ancho: contenedor más grande, tipografía
+     un toque mayor y formularios en 2 columnas.
+     ========================================================= */
+  @media (min-width: 900px) {
+    .app {
+      max-width: 1040px;
+      padding: 24px 28px 40px;
+    }
+
+    .topbar h1 { font-size: 1.75rem; margin: 4px 0 20px; }
+    .topbar .link { font-size: 1rem; }
+
+    .card {
+      padding: 22px 24px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 14px rgba(0, 0, 0, 0.25);
+    }
+    .card-title { font-size: 1.2rem; margin-bottom: 18px; }
+
+    .tabs { gap: 8px; margin-bottom: 20px; }
+    .tab { min-height: 48px; font-size: 0.95rem; padding: 0 12px; }
+
+    .subtabs { max-width: 420px; }
+
+    /* Formularios en 2 columnas. Los contenedores son los que tienen los
+       .field como hijos directos. */
+    #form-gasto,
+    #c-editor,
+    #r-config,
+    #m-fields-cat,
+    #m-fields-med {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      column-gap: 20px;
+      align-items: start;
+    }
+    #c-editor > .editor-title { grid-column: 1 / -1; }
+
+    /* Botones: no ocupan todo el ancho en desktop. */
+    #form-gasto > .btn,
+    #form-gasto > .btn-sec,
+    #c-editor > .btn,
+    #c-editor > .btn-sec,
+    #m-editor > .btn,
+    #m-editor > .btn-sec,
+    #r-config > .btn,
+    #r-confirmar,
+    #r-add-suelto,
+    #c-nuevo,
+    #m-nuevo {
+      width: auto;
+      min-width: 210px;
+      justify-self: start;
+      margin-top: 8px;
+      padding-left: 28px;
+      padding-right: 28px;
+    }
+    /* Estos no viven dentro de un grid: inline-block para que width:auto
+       realmente los achique al contenido. */
+    #m-editor > .btn,
+    #m-editor > .btn-sec,
+    #r-confirmar,
+    #r-add-suelto,
+    #c-nuevo,
+    #m-nuevo { display: inline-block; }
+    #m-editor > .btn-sec { margin-top: 8px; margin-left: 10px; }
+    #r-config > .btn { align-self: end; }
+
+    /* Filtros: un poco más de aire y campos que no se estiren de más. */
+    .filtros-row { gap: 16px; }
+    .btn + .filtros-row,
+    .btn-sec + .filtros-row { margin-top: 26px; }
+
+    /* Lista de gastos: acciones a la derecha, más aire por fila. */
+    .gasto { padding: 14px 0; gap: 18px; }
+    .gasto-desc { font-size: 1.02rem; }
+    .gasto-meta { font-size: 0.85rem; }
+    .gasto-monto { font-size: 1.1rem; }
+
+    /* Grilla del resumen: cada ítem usa 2 columnas (categoría | monto+moneda);
+       la cabecera y la referencia de cuota teórica ocupan el ancho completo. */
+    .rrow {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      column-gap: 20px;
+      align-items: end;
+      padding: 16px 0;
+    }
+    .rrow-head,
+    .rrow-ref { grid-column: 1 / -1; }
+
+    .pgroup-tarjeta { font-size: 1.05rem; }
+    .toast { font-size: 1rem; }
+  }
 </style>
