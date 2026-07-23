@@ -32,7 +32,12 @@ function getCatalogos() {
         return { id: String(m.id), entidad: String(m.entidad || ''), tipo_medio: String(m.tipo_medio || '') };
       });
 
-    return { ok: true, data: { categorias: categorias, medios: medios } };
+    // Tarjetas = medios activos de crédito. Se derivan de `medios` para que el
+    // form de compra (It 2) y las vistas de crédito compartan una sola llamada
+    // y se refresquen en caliente igual que el resto de los catálogos.
+    var tarjetas = medios.filter(function (m) { return m.tipo_medio === 'Credito'; });
+
+    return { ok: true, data: { categorias: categorias, medios: medios, tarjetas: tarjetas } };
   } catch (e) {
     return { ok: false, error: e.message };
   }
@@ -224,6 +229,186 @@ function borrarGasto(id) {
     if (!id) return { ok: false, error: 'Falta el id del gasto a borrar.' };
     var ok = borrarFila_('Gastos', id);
     if (!ok) return { ok: false, error: 'No se encontró el gasto (¿ya fue borrado?).' };
+    return { ok: true, data: { id: id } };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/* ===================== Compras a crédito (slice 2a) ===================== */
+
+/**
+ * Da de alta una compra en cuotas (`ComprasCredito`). `cuotas_previas = 0`
+ * siempre (hacia adelante no hay historia previa a este sistema). El estado
+ * (pagadas/pendientes) NO se persiste: se deriva de los pagos vinculados.
+ * `payload` = { fecha_compra, descripcion, medio_pago_id, categoria_id,
+ * monto_total, n_cuotas, moneda, nota }.
+ */
+function crearCompra(payload) {
+  try {
+    var v = validarCompraPayload_(payload);
+    if (!v.ok) return v;
+
+    var compra = {
+      id: nuevoId_(),
+      fecha_compra: v.data.fecha_compra,
+      descripcion: v.data.descripcion,
+      medio_pago_id: v.data.medio_pago_id,
+      categoria_id: v.data.categoria_id,
+      monto_total: v.data.monto_total,
+      n_cuotas: v.data.n_cuotas,
+      moneda: v.data.moneda,
+      cuotas_previas: 0,
+      nota: v.data.nota
+    };
+
+    insertarFilas_('ComprasCredito', [compra]);
+    return { ok: true, data: { id: compra.id } };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Lista compras a crédito con etiquetas y estado derivado. `filtros` =
+ * { medio_pago_id, estado:'pendientes'|'completas'|'todas' } (opcionales).
+ *
+ * Estado (CLAUDE.md): pagadas = cuotas_previas + COUNT(pagos vinculados);
+ * pendientes = n_cuotas − pagadas; completa cuando pendientes <= 0. El avance
+ * se mide SIEMPRE por conteo de cuotas, nunca por ratio de montos. El pagado se
+ * agrupa por moneda (los pagos pueden estar en distinta moneda que la compra):
+ * nunca se suman monedas distintas.
+ */
+function listarCompras(filtros) {
+  try {
+    filtros = filtros || {};
+    var medF = String(filtros.medio_pago_id || '').trim();
+    var estadoF = String(filtros.estado || 'todas').trim();
+
+    var medLabel = {};
+    leerTabla_('MediosPago').forEach(function (m) { medLabel[String(m.id)] = String(m.entidad || ''); });
+
+    var catInfo = {};
+    leerTabla_('Categorias').forEach(function (c) {
+      var sub = String(c.subcategoria || '').trim();
+      var cat = String(c.categoria || '');
+      catInfo[String(c.id)] = cat + (sub ? ' › ' + sub : '');
+    });
+
+    // Pagos vinculados agrupados por compra: conteo + suma por moneda.
+    var pagosPorCompra = {};
+    leerTabla_('Gastos').forEach(function (g) {
+      var cid = String(g.compra_credito_id || '').trim();
+      if (!cid) return;
+      var p = pagosPorCompra[cid] || (pagosPorCompra[cid] = { count: 0, porMoneda: {} });
+      p.count++;
+      var mon = String(g.moneda || 'ARS');
+      p.porMoneda[mon] = (p.porMoneda[mon] || 0) + (Number(g.monto) || 0);
+    });
+
+    var compras = leerTabla_('ComprasCredito').map(function (c) {
+      var id = String(c.id);
+      var nCuotas = Number(c.n_cuotas) || 0;
+      var previas = Number(c.cuotas_previas) || 0;
+      var pagos = pagosPorCompra[id] || { count: 0, porMoneda: {} };
+      var pagadas = previas + pagos.count;
+      var pendientes = Math.max(0, nCuotas - pagadas);
+      var mid = String(c.medio_pago_id || '');
+      var montoTotal = Number(c.monto_total) || 0;
+      var pagado = Object.keys(pagos.porMoneda).map(function (mon) {
+        return { moneda: mon, monto: pagos.porMoneda[mon] };
+      });
+      return {
+        id: id,
+        fecha_compra: fechaISO_(c.fecha_compra),
+        descripcion: String(c.descripcion || ''),
+        medio_pago_id: mid,
+        tarjeta_label: medLabel[mid] || mid,
+        categoria_id: String(c.categoria_id || ''),
+        categoria_label: catInfo[String(c.categoria_id || '')] || '',
+        monto_total: montoTotal,
+        n_cuotas: nCuotas,
+        moneda: String(c.moneda || ''),
+        cuotas_previas: previas,
+        nota: String(c.nota || ''),
+        pagadas: pagadas,
+        pendientes: pendientes,
+        completa: pendientes <= 0,
+        monto_cuota_teorico: nCuotas > 0 ? montoTotal / nCuotas : 0,
+        pagado: pagado
+      };
+    }).filter(function (c) {
+      if (medF && c.medio_pago_id !== medF) return false;
+      if (estadoF === 'pendientes' && c.completa) return false;
+      if (estadoF === 'completas' && !c.completa) return false;
+      return true;
+    });
+
+    // Pendientes primero, y dentro de cada grupo por fecha de compra desc.
+    compras.sort(function (a, b) {
+      if (a.completa !== b.completa) return a.completa ? 1 : -1;
+      return a.fecha_compra < b.fecha_compra ? 1 : a.fecha_compra > b.fecha_compra ? -1 : 0;
+    });
+
+    return { ok: true, data: { compras: compras } };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Edita una compra. Bloquea bajar `n_cuotas` por debajo de las ya pagadas
+ * (dejaría pendientes negativos y pagos sin cuota válida). Conserva id y
+ * cuotas_previas.
+ */
+function actualizarCompra(id, payload) {
+  try {
+    id = String(id || '').trim();
+    if (!id) return { ok: false, error: 'Falta el id de la compra.' };
+
+    var v = validarCompraPayload_(payload);
+    if (!v.ok) return v;
+
+    var compra = leerTabla_('ComprasCredito').filter(function (c) { return String(c.id) === id; })[0];
+    if (!compra) return { ok: false, error: 'No se encontró la compra (¿ya fue borrada?).' };
+
+    var pagadas = (Number(compra.cuotas_previas) || 0) + contarPagosDeCompra_(id);
+    if (v.data.n_cuotas < pagadas) {
+      return { ok: false, error: 'No podés dejar menos cuotas (' + v.data.n_cuotas + ') que las ya pagadas (' + pagadas + ').' };
+    }
+
+    var ok = actualizarFila_('ComprasCredito', id, {
+      fecha_compra: v.data.fecha_compra,
+      descripcion: v.data.descripcion,
+      medio_pago_id: v.data.medio_pago_id,
+      categoria_id: v.data.categoria_id,
+      monto_total: v.data.monto_total,
+      n_cuotas: v.data.n_cuotas,
+      moneda: v.data.moneda,
+      nota: v.data.nota
+    });
+    if (!ok) return { ok: false, error: 'No se encontró la compra (¿ya fue borrada?).' };
+    return { ok: true, data: { id: id } };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Borra FÍSICAMENTE una compra, solo si no tiene pagos (cuotas) vinculados en
+ * `Gastos`. Si los tiene, se niega para no dejar pagos huérfanos: primero hay
+ * que borrar esas cuotas desde el Historial.
+ */
+function borrarCompra(id) {
+  try {
+    id = String(id || '').trim();
+    if (!id) return { ok: false, error: 'Falta el id de la compra.' };
+    var pagos = contarPagosDeCompra_(id);
+    if (pagos > 0) {
+      return { ok: false, error: 'No se puede eliminar: tiene ' + pagos + ' cuota(s) pagada(s). Borrá esos pagos en el Historial primero.' };
+    }
+    var ok = borrarFila_('ComprasCredito', id);
+    if (!ok) return { ok: false, error: 'No se encontró la compra.' };
     return { ok: true, data: { id: id } };
   } catch (e) {
     return { ok: false, error: e.message };

@@ -15,6 +15,7 @@
       <nav class="tabs" id="tabs" hidden>
         <button type="button" class="tab active" data-view="form">Cargar</button>
         <button type="button" class="tab" data-view="historial">Historial</button>
+        <button type="button" class="tab" data-view="credito">Crédito</button>
         <button type="button" class="tab" data-view="maestros">Maestros</button>
       </nav>
 
@@ -114,6 +115,90 @@
         </div>
         <p class="muted" id="hist-resumen"></p>
         <div id="hist-list"></div>
+      </section>
+
+      <!-- ===== Vista: Crédito (compras en cuotas) ===== -->
+      <section class="card view" id="credito-card" data-view="credito" hidden>
+        <h2 class="card-title">Compras en cuotas</h2>
+
+        <div class="editor" id="c-editor" hidden>
+          <h3 class="editor-title" id="c-editor-title">Nueva compra</h3>
+
+          <label class="field">
+            <span>Fecha de compra</span>
+            <input type="date" id="c-fecha" required>
+          </label>
+
+          <label class="field">
+            <span>Descripción</span>
+            <input type="text" id="c-descripcion" maxlength="140" placeholder="Ej: Notebook">
+          </label>
+
+          <label class="field">
+            <span>Tarjeta</span>
+            <select id="c-tarjeta" required></select>
+          </label>
+
+          <label class="field">
+            <span>Tipo <em class="opt">(categoría de las cuotas)</em></span>
+            <select id="c-tipo" required></select>
+          </label>
+          <label class="field">
+            <span>Categoría</span>
+            <select id="c-categoria" required disabled></select>
+          </label>
+          <label class="field">
+            <span>Subcategoría</span>
+            <select id="c-subcategoria" required disabled></select>
+          </label>
+
+          <div class="row">
+            <label class="field field-monto">
+              <span>Monto total</span>
+              <input type="text" id="c-monto" inputmode="decimal" placeholder="0" required>
+            </label>
+            <label class="field field-moneda">
+              <span>Moneda</span>
+              <select id="c-moneda">
+                <option value="ARS" selected>ARS</option>
+                <option value="USD">USD</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Cantidad de cuotas</span>
+            <input type="number" id="c-ncuotas" inputmode="numeric" min="1" step="1" placeholder="Ej: 12" required>
+          </label>
+
+          <label class="field">
+            <span>Nota <em class="opt">(opcional)</em></span>
+            <input type="text" id="c-nota" maxlength="140" placeholder="Ej: compartido con Papá">
+          </label>
+
+          <button type="button" id="c-save" class="btn">Guardar</button>
+          <button type="button" id="c-cancel" class="btn-sec">Cancelar</button>
+        </div>
+
+        <button type="button" id="c-nuevo" class="btn">➕ Nueva compra</button>
+
+        <div class="filtros-row">
+          <label class="field">
+            <span>Tarjeta</span>
+            <select id="c-filtro-tarjeta"></select>
+          </label>
+          <label class="field">
+            <span>Estado</span>
+            <select id="c-filtro-estado">
+              <option value="pendientes" selected>Pendientes</option>
+              <option value="completas">Completas</option>
+              <option value="todas">Todas</option>
+            </select>
+          </label>
+        </div>
+
+        <p class="muted" id="c-resumen"></p>
+        <div id="c-list"></div>
       </section>
 
       <!-- ===== Vista: Maestros (ABM) ===== -->

@@ -260,6 +260,39 @@
     vertical-align: middle;
   }
 
+  /* --- Progreso de cuotas (Crédito) --- */
+  .progress {
+    height: 7px;
+    background: var(--field);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    margin: 8px 0 4px;
+  }
+  .progress-bar {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 6px 0 0 6px;
+    transition: width 0.2s ease;
+  }
+  .progress-bar.done { background: var(--ok); }
+  .compra-prog {
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .badge-done {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: var(--ok);
+    background: rgba(46, 204, 113, 0.15);
+    border-radius: 6px;
+    padding: 1px 6px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .gasto-sub { font-size: 0.8rem; color: var(--muted); }
+
   /* --- Subtabs (Maestros) --- */
   .subtabs {
     display: flex;

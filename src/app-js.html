@@ -6,6 +6,7 @@
     var $ = function (id) { return document.getElementById(id); };
     var categorias = [];   // [{id, tipo, categoria, subcategoria}] activas
     var medios = [];       // [{id, entidad, tipo_medio}] activos
+    var tarjetas = [];     // [{id, entidad, tipo_medio}] activos con tipo_medio Credito
     var optTipos = [];     // opciones de "Tipo" (categorías)
     var optTiposMedio = [];// opciones de "Tipo de medio" (sin Credito)
     var editId = null;     // id del gasto en edición; null = alta
@@ -63,6 +64,26 @@
       dlTipos: $('dl-tipos'),
       dlCategorias: $('dl-categorias'),
       dlTipoMedios: $('dl-tipomedios'),
+      // crédito (compras en cuotas)
+      cEditor: $('c-editor'),
+      cEditorTitle: $('c-editor-title'),
+      cFecha: $('c-fecha'),
+      cDescripcion: $('c-descripcion'),
+      cTarjeta: $('c-tarjeta'),
+      cTipo: $('c-tipo'),
+      cCategoria: $('c-categoria'),
+      cSubcategoria: $('c-subcategoria'),
+      cMonto: $('c-monto'),
+      cMoneda: $('c-moneda'),
+      cNcuotas: $('c-ncuotas'),
+      cNota: $('c-nota'),
+      cSave: $('c-save'),
+      cCancel: $('c-cancel'),
+      cNuevo: $('c-nuevo'),
+      cFiltroTarjeta: $('c-filtro-tarjeta'),
+      cFiltroEstado: $('c-filtro-estado'),
+      cResumen: $('c-resumen'),
+      cList: $('c-list'),
       toast: $('toast')
     };
 
@@ -654,12 +675,216 @@
       renderMaestros();
     }
 
+    // ---- Crédito (compras en cuotas) ----
+    var compras = [];      // últimas compras listadas (para resolver Editar)
+    var cEditId = null;    // id de compra en edición; null = alta
+
+    // Cascada Tipo → Categoría → Subcategoría del form de compra. Mirror de la
+    // del form de gasto; el value final (subcategoría) es el categoria_id que
+    // heredan las cuotas.
+    function onCTipoChange() {
+      var tipo = el.cTipo.value;
+      var cats = distinct(
+        categorias.filter(function (c) { return c.tipo === tipo; }).map(function (c) { return c.categoria; })
+      ).map(function (cat) { return { value: cat, label: cat }; });
+      fillSelect(el.cCategoria, cats, 'Elegí categoría…');
+      el.cCategoria.disabled = false;
+      fillSelect(el.cSubcategoria, [], 'Elegí categoría primero…');
+      el.cSubcategoria.disabled = true;
+    }
+    function onCCategoriaChange() {
+      var tipo = el.cTipo.value, cat = el.cCategoria.value;
+      var rows = categorias.filter(function (c) { return c.tipo === tipo && c.categoria === cat; })
+        .map(function (c) { return { value: c.id, label: c.subcategoria || '(sin subcategoría)' }; });
+      fillSelect(el.cSubcategoria, rows, 'Elegí subcategoría…');
+      el.cSubcategoria.disabled = false;
+      if (rows.length === 1) el.cSubcategoria.value = rows[0].value;
+    }
+    function setCascadaCategoriaC(categoriaId) {
+      var c = findById(categorias, categoriaId);
+      if (!c) return false;
+      el.cTipo.value = c.tipo; onCTipoChange();
+      el.cCategoria.value = c.categoria; onCCategoriaChange();
+      el.cSubcategoria.value = String(categoriaId);
+      return true;
+    }
+
+    function cerrarEditorCompra() {
+      cEditId = null;
+      el.cEditor.hidden = true;
+      el.cNuevo.hidden = false;
+    }
+
+    function resetCompraFields() {
+      el.cFecha.value = hoyISO();
+      el.cDescripcion.value = '';
+      fillSelect(el.cTarjeta, tarjetas.map(function (t) { return { value: t.id, label: t.entidad }; }), 'Elegí tarjeta…');
+      fillSelect(el.cTipo, optTipos, 'Elegí tipo…');
+      fillSelect(el.cCategoria, [], 'Elegí tipo primero…'); el.cCategoria.disabled = true;
+      fillSelect(el.cSubcategoria, [], 'Elegí categoría primero…'); el.cSubcategoria.disabled = true;
+      el.cMonto.value = ''; el.cMoneda.value = 'ARS';
+      el.cNcuotas.value = ''; el.cNota.value = '';
+    }
+
+    function abrirEditorCompra(compra) {
+      cEditId = compra ? compra.id : null;
+      el.cEditorTitle.textContent = compra ? 'Editar compra' : 'Nueva compra';
+      resetCompraFields();
+      if (compra) {
+        el.cFecha.value = compra.fecha_compra;   // ya viene ISO del server
+        el.cDescripcion.value = compra.descripcion || '';
+        if (findById(tarjetas, compra.medio_pago_id)) el.cTarjeta.value = compra.medio_pago_id;
+        else toast('La tarjeta original está inactiva: reelegila.', '');
+        if (!setCascadaCategoriaC(compra.categoria_id)) toast('La categoría original está inactiva: reelegila.', '');
+        el.cMonto.value = montoAInput(compra.monto_total);
+        el.cMoneda.value = compra.moneda || 'ARS';
+        el.cNcuotas.value = compra.n_cuotas;
+        el.cNota.value = compra.nota || '';
+      }
+      el.cEditor.hidden = false;
+      el.cNuevo.hidden = true;
+      el.cEditor.scrollIntoView({ block: 'nearest' });
+    }
+
+    function guardarCompra() {
+      var monto = parseMonto(el.cMonto.value);
+      if (!isFinite(monto) || monto <= 0) { toast('El monto total debe ser mayor a 0.', 'err'); el.cMonto.focus(); return; }
+      if (!el.cTarjeta.value) { toast('Elegí una tarjeta.', 'err'); return; }
+      if (!el.cSubcategoria.value) { toast('Elegí una categoría completa.', 'err'); return; }
+      var ncuotas = parseInt(el.cNcuotas.value, 10);
+      if (!(ncuotas >= 1)) { toast('La cantidad de cuotas debe ser 1 o más.', 'err'); el.cNcuotas.focus(); return; }
+
+      var payload = {
+        fecha_compra: el.cFecha.value,
+        descripcion: el.cDescripcion.value,
+        medio_pago_id: el.cTarjeta.value,
+        categoria_id: el.cSubcategoria.value,
+        monto_total: monto,
+        n_cuotas: ncuotas,
+        moneda: el.cMoneda.value,
+        nota: el.cNota.value
+      };
+
+      el.cSave.disabled = true; el.cSave.textContent = 'Guardando…';
+      function done(res) {
+        el.cSave.disabled = false; el.cSave.textContent = 'Guardar';
+        if (res && res.ok) { toast('✓ Guardado', 'ok'); cerrarEditorCompra(); cargarCompras(); }
+        else { toast('✗ ' + ((res && res.error) || 'No se pudo guardar.'), 'err'); }
+      }
+      function fail(err) {
+        el.cSave.disabled = false; el.cSave.textContent = 'Guardar';
+        toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err');
+      }
+      var r = google.script.run.withSuccessHandler(done).withFailureHandler(fail);
+      if (cEditId) r.actualizarCompra(cEditId, payload); else r.crearCompra(payload);
+    }
+
+    // Borrado físico: el server solo lo permite si no hay cuotas pagadas; si las
+    // hay, devuelve un error que lo explica (lo mostramos tal cual).
+    function eliminarCompra(compra) {
+      if (!window.confirm('¿Eliminar la compra "' + (compra.descripcion || 'sin descripción') + '"?\nSolo se puede si no tiene cuotas pagadas.')) return;
+      function done(res) {
+        if (res && res.ok) { toast('✓ Eliminada', 'ok'); cargarCompras(); }
+        else { toast('✗ ' + ((res && res.error) || 'No se pudo eliminar.'), 'err'); }
+      }
+      function fail(err) { toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err'); }
+      google.script.run.withSuccessHandler(done).withFailureHandler(fail).borrarCompra(compra.id);
+    }
+
+    function renderCompras(lista) {
+      el.cResumen.textContent = lista.length + (lista.length === 1 ? ' compra' : ' compras');
+      if (!lista.length) { el.cList.innerHTML = '<p class="muted">No hay compras con ese filtro.</p>'; return; }
+
+      var frag = document.createDocumentFragment();
+      lista.forEach(function (c) {
+        var row = document.createElement('div');
+        row.className = 'gasto' + (c.completa ? ' inactivo' : '');
+
+        var main = document.createElement('div');
+        main.className = 'gasto-main';
+
+        var desc = document.createElement('p');
+        desc.className = 'gasto-desc';
+        desc.textContent = c.descripcion || '(sin descripción)';
+        if (c.completa) {
+          var b = document.createElement('span');
+          b.className = 'badge-done'; b.textContent = 'completa';
+          desc.appendChild(b);
+        }
+
+        var meta = document.createElement('div');
+        meta.className = 'gasto-meta';
+        meta.textContent = fmtFecha(c.fecha_compra) + ' · ' + c.tarjeta_label + ' · ' + c.categoria_label;
+
+        var prog = document.createElement('div');
+        prog.className = 'progress';
+        var bar = document.createElement('div');
+        bar.className = 'progress-bar' + (c.completa ? ' done' : '');
+        var pct = c.n_cuotas > 0 ? Math.round(100 * c.pagadas / c.n_cuotas) : 0;
+        bar.style.width = Math.min(100, pct) + '%';
+        prog.appendChild(bar);
+
+        var progTxt = document.createElement('div');
+        progTxt.className = 'compra-prog';
+        progTxt.textContent = c.pagadas + '/' + c.n_cuotas + ' cuotas · ' + fmtMoneda(c.monto_cuota_teorico, c.moneda) + '/cuota';
+
+        var acc = document.createElement('div');
+        acc.className = 'gasto-acciones';
+        var bEd = document.createElement('button');
+        bEd.className = 'icon-btn'; bEd.type = 'button'; bEd.textContent = '✎ Editar';
+        bEd.addEventListener('click', function () { abrirEditorCompra(c); });
+        var bDel = document.createElement('button');
+        bDel.className = 'icon-btn danger'; bDel.type = 'button'; bDel.textContent = '🗑 Eliminar';
+        bDel.addEventListener('click', function () { eliminarCompra(c); });
+        acc.appendChild(bEd); acc.appendChild(bDel);
+
+        main.appendChild(desc); main.appendChild(meta);
+        main.appendChild(prog); main.appendChild(progTxt); main.appendChild(acc);
+
+        var side = document.createElement('div');
+        side.className = 'gasto-side';
+        var monto = document.createElement('span');
+        monto.className = 'gasto-monto';
+        monto.textContent = fmtMoneda(c.monto_total, c.moneda);
+        side.appendChild(monto);
+        if (c.pagado && c.pagado.length) {
+          var sub = document.createElement('span');
+          sub.className = 'gasto-sub';
+          sub.textContent = c.pagado.map(function (p) { return 'Pagó ' + fmtMoneda(p.monto, p.moneda); }).join(' · ');
+          side.appendChild(sub);
+        }
+
+        row.appendChild(main); row.appendChild(side);
+        frag.appendChild(row);
+      });
+      el.cList.innerHTML = '';
+      el.cList.appendChild(frag);
+    }
+
+    function cargarCompras() {
+      el.cResumen.textContent = 'Cargando…';
+      el.cList.innerHTML = '';
+      cerrarEditorCompra();
+      var filtros = { medio_pago_id: el.cFiltroTarjeta.value, estado: el.cFiltroEstado.value };
+      google.script.run
+        .withSuccessHandler(function (res) {
+          if (!res || !res.ok) { el.cResumen.textContent = '✗ ' + ((res && res.error) || 'Error al listar.'); return; }
+          compras = res.data.compras || [];
+          renderCompras(compras);
+        })
+        .withFailureHandler(function (err) {
+          el.cResumen.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
+        })
+        .listarCompras(filtros);
+    }
+
     // Reconstruye los globals y los selects que dependen de los catálogos
     // (form de gasto + filtros del historial) desde datos frescos del server.
     // fillFiltro preserva la selección actual, así un refresh no la pisa.
     function reconstruirDesdeCatalogos(data) {
       categorias = data.categorias || [];
       medios = data.medios || [];
+      tarjetas = data.tarjetas || [];
       optTipos = distinct(categorias.map(function (c) { return c.tipo; }))
         .map(function (t) { return { value: t, label: t }; });
       optTiposMedio = distinct(
@@ -673,6 +898,10 @@
       var medFiltro = medios.filter(function (m) { return m.tipo_medio !== 'Credito'; })
         .map(function (m) { return { value: m.id, label: m.entidad }; });
       fillFiltro(el.hMedio, medFiltro, 'Todo seleccionado', true);
+
+      // Filtro de tarjeta de la vista de crédito.
+      var tarjFiltro = tarjetas.map(function (t) { return { value: t.id, label: t.entidad }; });
+      fillFiltro(el.cFiltroTarjeta, tarjFiltro, 'Todas', true);
     }
 
     // Re-lee catálogos en caliente (tras un cambio de ABM o al tocar Actualizar)
@@ -747,9 +976,19 @@
       subBtns[s].addEventListener('click', function () { switchMaster(this.getAttribute('data-master')); });
     }
 
+    el.cTipo.addEventListener('change', onCTipoChange);
+    el.cCategoria.addEventListener('change', onCCategoriaChange);
+    el.cMonto.addEventListener('input', function () { el.cMonto.value = formatMonto(el.cMonto.value); });
+    el.cNuevo.addEventListener('click', function () { abrirEditorCompra(null); });
+    el.cCancel.addEventListener('click', cerrarEditorCompra);
+    el.cSave.addEventListener('click', guardarCompra);
+    el.cFiltroTarjeta.addEventListener('change', cargarCompras);
+    el.cFiltroEstado.addEventListener('change', cargarCompras);
+
     attachPicker(el.fecha);
     attachPicker(el.hDesde);
     attachPicker(el.hHasta);
+    attachPicker(el.cFecha);
 
     // Botón global: re-sincroniza catálogos y recarga la vista actual.
     el.btnRefresh.addEventListener('click', function () {
@@ -760,6 +999,7 @@
           toast('✓ Datos actualizados', 'ok');
           if (viewActual === 'historial') cargarHistorial();
           else if (viewActual === 'maestros') cargarMaestros();
+          else if (viewActual === 'credito') cargarCompras();
         } else {
           toast('✗ ' + ((res && res.error) || 'No se pudo actualizar.'), 'err');
         }
@@ -772,6 +1012,7 @@
         var v = this.getAttribute('data-view');
         if (v === 'form') { enterCreateMode(); showView('form'); }
         else if (v === 'maestros') { showView('maestros'); cargarMaestros(); }
+        else if (v === 'credito') { showView('credito'); cargarCompras(); }
         else { showView('historial'); cargarHistorial(); }
       });
     }
