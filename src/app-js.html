@@ -41,6 +41,8 @@
       hCategoria: $('h-categoria'),
       hSubcategoria: $('h-subcategoria'),
       hMedio: $('h-medio'),
+      hCuotas: $('h-cuotas'),
+      hTarjeta: $('h-tarjeta'),
       hLimpiar: $('h-limpiar'),
       histResumen: $('hist-resumen'),
       histList: $('hist-list'),
@@ -84,6 +86,19 @@
       cFiltroEstado: $('c-filtro-estado'),
       cResumen: $('c-resumen'),
       cList: $('c-list'),
+      // resumen de tarjeta (batch)
+      rConfig: $('r-config'),
+      rTarjeta: $('r-tarjeta'),
+      rFecha: $('r-fecha'),
+      rMedio: $('r-medio'),
+      rGenerar: $('r-generar'),
+      rGridWrap: $('r-grid-wrap'),
+      rGridInfo: $('r-grid-info'),
+      rGrid: $('r-grid'),
+      rAddSuelto: $('r-add-suelto'),
+      rReset: $('r-reset'),
+      rTotal: $('r-total'),
+      rConfirmar: $('r-confirmar'),
       toast: $('toast')
     };
 
@@ -307,6 +322,8 @@
       fillFiltro(el.hSubcategoria, [], 'Todo seleccionado', true);
       el.hSubcategoria.disabled = true;
       el.hMedio.value = '';
+      el.hCuotas.value = '';
+      el.hTarjeta.value = '';
       cargarHistorial();
     }
 
@@ -318,7 +335,9 @@
         hasta: el.hHasta.value,
         categoria: el.hCategoria.value,
         subcategoria: el.hSubcategoria.value,
-        medio_pago_id: el.hMedio.value
+        medio_pago_id: el.hMedio.value,
+        cuotas: el.hCuotas.value,
+        tarjeta_id: el.hTarjeta.value
       };
       google.script.run
         .withSuccessHandler(function (res) {
@@ -356,7 +375,9 @@
 
         var meta = document.createElement('div');
         meta.className = 'gasto-meta';
-        meta.textContent = fmtFecha(g.fecha) + ' · ' + g.categoria_label + ' · ' + g.medio_label;
+        var metaTxt = fmtFecha(g.fecha) + ' · ' + g.categoria_label + ' · ' + g.medio_label;
+        if (g.es_cuota && g.tarjeta_label) metaTxt += ' · 💳 ' + g.tarjeta_label;
+        meta.textContent = metaTxt;
 
         var acc = document.createElement('div');
         acc.className = 'gasto-acciones';
@@ -878,6 +899,268 @@
         .listarCompras(filtros);
     }
 
+    // ---- Resumen de tarjeta (batch, slice 2b) ----
+    var rItems = [];        // filas activas de la grilla: { compra_credito_id, els:{...}, suelto }
+    var rGenerando = false;
+
+    // Opciones planas de categoría "Categoría › Subcat" (value = categoria_id).
+    function categoriaFlatOpts() {
+      return categorias.map(function (c) {
+        return { value: c.id, label: c.categoria + (c.subcategoria ? ' › ' + c.subcategoria : '') };
+      }).sort(byLabel);
+    }
+
+    function fillCategoriaFlat(sel, selectedId) {
+      fillSelect(sel, categoriaFlatOpts(), 'Elegí categoría…');
+      if (selectedId && findById(categorias, selectedId)) sel.value = String(selectedId);
+    }
+
+    function resetResumen() {
+      rItems = [];
+      el.rGrid.innerHTML = '';
+      el.rGridWrap.hidden = true;
+      el.rConfig.hidden = false;
+      el.rTotal.textContent = '';
+    }
+
+    // Suma por moneda de las filas incluidas (tildadas), sin mezclar monedas.
+    function actualizarTotalResumen() {
+      var porMoneda = {}, n = 0;
+      rItems.forEach(function (r) {
+        if (r.els.check && !r.els.check.checked) return;
+        var monto = parseMonto(r.els.monto.value);
+        if (!isFinite(monto) || monto <= 0) return;
+        var mon = r.els.moneda.value || 'ARS';
+        porMoneda[mon] = (porMoneda[mon] || 0) + monto;
+        n++;
+      });
+      var partes = Object.keys(porMoneda).map(function (m) { return fmtMoneda(porMoneda[m], m); });
+      el.rTotal.textContent = n
+        ? n + (n === 1 ? ' ítem' : ' ítems') + ' · Total: ' + partes.join(' + ')
+        : 'Ningún ítem tildado.';
+    }
+
+    // Construye una fila de cuota (vinculada a una compra) en la grilla.
+    function agregarFilaCuota(compra) {
+      var row = document.createElement('div');
+      row.className = 'rrow';
+
+      var head = document.createElement('div');
+      head.className = 'rrow-head';
+      var chk = document.createElement('input');
+      chk.type = 'checkbox'; chk.checked = true;
+      var desc = document.createElement('div');
+      desc.className = 'rrow-desc';
+      desc.textContent = compra.descripcion || '(sin descripción)';
+      var cuota = document.createElement('span');
+      cuota.className = 'rrow-cuota';
+      cuota.textContent = 'cuota ' + (compra.pagadas + 1) + '/' + compra.n_cuotas;
+      desc.appendChild(cuota);
+      head.appendChild(chk); head.appendChild(desc);
+
+      var cat = document.createElement('select');
+      fillCategoriaFlat(cat, compra.categoria_id);
+
+      var fila = document.createElement('div');
+      fila.className = 'row';
+      var montoWrap = document.createElement('label');
+      montoWrap.className = 'field field-monto';
+      var montoLbl = document.createElement('span'); montoLbl.textContent = 'Monto';
+      var monto = document.createElement('input');
+      monto.type = 'text'; monto.inputMode = 'decimal'; monto.placeholder = '0';
+      montoWrap.appendChild(montoLbl); montoWrap.appendChild(monto);
+      var monWrap = document.createElement('label');
+      monWrap.className = 'field field-moneda';
+      var monLbl = document.createElement('span'); monLbl.textContent = 'Moneda';
+      var moneda = document.createElement('select');
+      moneda.innerHTML = '<option value="ARS">ARS</option><option value="USD">USD</option>';
+      monWrap.appendChild(monLbl); monWrap.appendChild(moneda);
+      fila.appendChild(montoWrap); fila.appendChild(monWrap);
+
+      // Default: moneda del pago = ARS. Monto: si la compra es ARS, prellenamos
+      // la cuota teórica; si es USD, va vacío (se carga lo pagado en ARS) y la
+      // teórica en USD se muestra solo como referencia.
+      moneda.value = 'ARS';
+      var ref = null;
+      if (compra.moneda === 'ARS') {
+        monto.value = montoAInput(compra.monto_cuota_teorico);
+      } else {
+        ref = document.createElement('p');
+        ref.className = 'rrow-ref';
+        ref.textContent = 'Cuota teórica: ' + fmtMoneda(compra.monto_cuota_teorico, compra.moneda) + ' (referencia)';
+      }
+
+      monto.addEventListener('input', function () { monto.value = formatMonto(monto.value); actualizarTotalResumen(); });
+      moneda.addEventListener('change', actualizarTotalResumen);
+      chk.addEventListener('change', function () { row.classList.toggle('off', !chk.checked); actualizarTotalResumen(); });
+
+      row.appendChild(head);
+      if (ref) row.appendChild(ref);
+      row.appendChild(cat);
+      row.appendChild(fila);
+      el.rGrid.appendChild(row);
+
+      rItems.push({ compra_credito_id: compra.id, suelto: false, els: { check: chk, cat: cat, monto: monto, moneda: moneda, desc: null } });
+    }
+
+    // Fila de gasto suelto (no vinculado a compra): descripción propia, sin k/N.
+    function agregarFilaSuelto() {
+      var row = document.createElement('div');
+      row.className = 'rrow';
+
+      var head = document.createElement('div');
+      head.className = 'rrow-head';
+      var chk = document.createElement('input');
+      chk.type = 'checkbox'; chk.checked = true;
+      var titulo = document.createElement('div');
+      titulo.className = 'rrow-desc'; titulo.textContent = 'Gasto suelto';
+      var del = document.createElement('button');
+      del.type = 'button'; del.className = 'rrow-suelto-del'; del.textContent = '✕ quitar';
+      head.appendChild(chk); head.appendChild(titulo); head.appendChild(del);
+
+      var descWrap = document.createElement('label');
+      descWrap.className = 'field';
+      var descLbl = document.createElement('span'); descLbl.textContent = 'Descripción';
+      var desc = document.createElement('input');
+      desc.type = 'text'; desc.maxLength = 140; desc.placeholder = 'Ej: seguro, suscripción…';
+      descWrap.appendChild(descLbl); descWrap.appendChild(desc);
+
+      var cat = document.createElement('select');
+      fillCategoriaFlat(cat, '');
+
+      var fila = document.createElement('div');
+      fila.className = 'row';
+      var montoWrap = document.createElement('label');
+      montoWrap.className = 'field field-monto';
+      var montoLbl = document.createElement('span'); montoLbl.textContent = 'Monto';
+      var monto = document.createElement('input');
+      monto.type = 'text'; monto.inputMode = 'decimal'; monto.placeholder = '0';
+      montoWrap.appendChild(montoLbl); montoWrap.appendChild(monto);
+      var monWrap = document.createElement('label');
+      monWrap.className = 'field field-moneda';
+      var monLbl = document.createElement('span'); monLbl.textContent = 'Moneda';
+      var moneda = document.createElement('select');
+      moneda.innerHTML = '<option value="ARS">ARS</option><option value="USD">USD</option>';
+      moneda.value = 'ARS';
+      monWrap.appendChild(monLbl); monWrap.appendChild(moneda);
+      fila.appendChild(montoWrap); fila.appendChild(monWrap);
+
+      var item = { compra_credito_id: '', suelto: true, els: { check: chk, cat: cat, monto: monto, moneda: moneda, desc: desc } };
+
+      monto.addEventListener('input', function () { monto.value = formatMonto(monto.value); actualizarTotalResumen(); });
+      moneda.addEventListener('change', actualizarTotalResumen);
+      chk.addEventListener('change', function () { row.classList.toggle('off', !chk.checked); actualizarTotalResumen(); });
+      del.addEventListener('click', function () {
+        var idx = rItems.indexOf(item);
+        if (idx >= 0) rItems.splice(idx, 1);
+        el.rGrid.removeChild(row);
+        actualizarTotalResumen();
+      });
+
+      row.appendChild(head);
+      row.appendChild(descWrap);
+      row.appendChild(cat);
+      row.appendChild(fila);
+      el.rGrid.appendChild(row);
+      rItems.push(item);
+      actualizarTotalResumen();
+    }
+
+    function generarGrilla() {
+      var tarjetaId = el.rTarjeta.value;
+      var medioId = el.rMedio.value;
+      if (!tarjetaId) { toast('Elegí una tarjeta.', 'err'); return; }
+      if (!el.rFecha.value) { toast('Elegí la fecha de pago.', 'err'); return; }
+      if (!medioId) { toast('Elegí con qué medio se paga el resumen.', 'err'); return; }
+      if (rGenerando) return;
+      rGenerando = true;
+      el.rGenerar.disabled = true;
+      el.rGenerar.textContent = 'Generando…';
+
+      google.script.run
+        .withSuccessHandler(function (res) {
+          rGenerando = false;
+          el.rGenerar.disabled = false;
+          el.rGenerar.textContent = 'Generar grilla';
+          if (!res || !res.ok) { toast('✗ ' + ((res && res.error) || 'No se pudo generar.'), 'err'); return; }
+          var pend = res.data.compras || [];
+          rItems = [];
+          el.rGrid.innerHTML = '';
+          pend.forEach(agregarFilaCuota);
+          var tarj = findById(tarjetas, tarjetaId);
+          el.rGridInfo.textContent = (tarj ? tarj.entidad : '') + ' · ' + fmtFecha(el.rFecha.value) +
+            ' · ' + pend.length + (pend.length === 1 ? ' cuota' : ' cuotas');
+          if (!pend.length) {
+            el.rGrid.innerHTML = '<p class="muted">Esta tarjeta no tiene cuotas pendientes. Podés agregar gastos sueltos.</p>';
+          }
+          el.rConfig.hidden = true;
+          el.rGridWrap.hidden = false;
+          actualizarTotalResumen();
+          window.scrollTo(0, 0);
+        })
+        .withFailureHandler(function (err) {
+          rGenerando = false;
+          el.rGenerar.disabled = false;
+          el.rGenerar.textContent = 'Generar grilla';
+          toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err');
+        })
+        .listarCompras({ medio_pago_id: tarjetaId, estado: 'pendientes' });
+    }
+
+    function confirmarResumenClick() {
+      var incluidos = rItems.filter(function (r) { return r.els.check.checked; });
+      if (!incluidos.length) { toast('Tildá al menos una cuota o agregá un gasto.', 'err'); return; }
+
+      var items = [];
+      for (var i = 0; i < incluidos.length; i++) {
+        var r = incluidos[i];
+        var monto = parseMonto(r.els.monto.value);
+        if (!isFinite(monto) || monto <= 0) { toast('Hay un monto vacío o inválido. Revisá la grilla.', 'err'); r.els.monto.focus(); return; }
+        if (!r.els.cat.value) { toast('Hay un ítem sin categoría.', 'err'); r.els.cat.focus(); return; }
+        items.push({
+          compra_credito_id: r.compra_credito_id,
+          categoria_id: r.els.cat.value,
+          monto: monto,
+          moneda: r.els.moneda.value,
+          descripcion: r.els.desc ? r.els.desc.value : ''
+        });
+      }
+
+      var payload = { fecha: el.rFecha.value, medio_pago_id: el.rMedio.value, items: items };
+      enviarResumen(payload, false);
+    }
+
+    function enviarResumen(payload, forzar) {
+      el.rConfirmar.disabled = true;
+      el.rConfirmar.textContent = 'Cargando…';
+      function restore() { el.rConfirmar.disabled = false; el.rConfirmar.textContent = 'Confirmar y cargar'; }
+      google.script.run
+        .withSuccessHandler(function (res) {
+          if (res && res.ok && res.data && res.data.requiereConfirmacion) {
+            restore();
+            var lista = (res.data.duplicados || []).join(', ');
+            if (window.confirm('Ya hay pagos con esa fecha para: ' + lista + '.\n¿Cargar igual (se duplicarían)?')) {
+              enviarResumen(payload, true);
+            }
+            return;
+          }
+          restore();
+          if (res && res.ok) {
+            toast('✓ ' + res.data.insertados + ' gasto(s) cargados', 'ok');
+            resetResumen();
+            showView('historial');
+            cargarHistorial();
+          } else {
+            toast('✗ ' + ((res && res.error) || 'No se pudo cargar.'), 'err');
+          }
+        })
+        .withFailureHandler(function (err) {
+          restore();
+          toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err');
+        })
+        .confirmarResumen(payload, forzar);
+    }
+
     // Reconstruye los globals y los selects que dependen de los catálogos
     // (form de gasto + filtros del historial) desde datos frescos del server.
     // fillFiltro preserva la selección actual, así un refresh no la pisa.
@@ -899,9 +1182,17 @@
         .map(function (m) { return { value: m.id, label: m.entidad }; });
       fillFiltro(el.hMedio, medFiltro, 'Todo seleccionado', true);
 
-      // Filtro de tarjeta de la vista de crédito.
+      // Filtro de tarjeta de la vista de crédito y del historial.
       var tarjFiltro = tarjetas.map(function (t) { return { value: t.id, label: t.entidad }; });
       fillFiltro(el.cFiltroTarjeta, tarjFiltro, 'Todas', true);
+      fillFiltro(el.hTarjeta, tarjFiltro, 'Todas', true);
+
+      // Selects del resumen de tarjeta: tarjeta (crédito) y cuenta que paga
+      // (medios NO crédito). fillFiltro preserva la selección en un refresh.
+      fillFiltro(el.rTarjeta, tarjFiltro, 'Elegí tarjeta…', true);
+      var medioPago = medios.filter(function (m) { return m.tipo_medio !== 'Credito'; })
+        .map(function (m) { return { value: m.id, label: m.entidad }; });
+      fillFiltro(el.rMedio, medioPago, 'Elegí medio…', true);
     }
 
     // Re-lee catálogos en caliente (tras un cambio de ABM o al tocar Actualizar)
@@ -964,6 +1255,8 @@
     el.hCategoria.addEventListener('change', onFiltroCategoriaChange);
     el.hSubcategoria.addEventListener('change', cargarHistorial);
     el.hMedio.addEventListener('change', cargarHistorial);
+    el.hCuotas.addEventListener('change', cargarHistorial);
+    el.hTarjeta.addEventListener('change', cargarHistorial);
     el.hLimpiar.addEventListener('click', limpiarFiltros);
 
     el.mNuevo.addEventListener('click', function () { abrirEditor(null); });
@@ -985,10 +1278,16 @@
     el.cFiltroTarjeta.addEventListener('change', cargarCompras);
     el.cFiltroEstado.addEventListener('change', cargarCompras);
 
+    el.rGenerar.addEventListener('click', generarGrilla);
+    el.rReset.addEventListener('click', resetResumen);
+    el.rAddSuelto.addEventListener('click', agregarFilaSuelto);
+    el.rConfirmar.addEventListener('click', confirmarResumenClick);
+
     attachPicker(el.fecha);
     attachPicker(el.hDesde);
     attachPicker(el.hHasta);
     attachPicker(el.cFecha);
+    attachPicker(el.rFecha);
 
     // Botón global: re-sincroniza catálogos y recarga la vista actual.
     el.btnRefresh.addEventListener('click', function () {
@@ -1013,6 +1312,7 @@
         if (v === 'form') { enterCreateMode(); showView('form'); }
         else if (v === 'maestros') { showView('maestros'); cargarMaestros(); }
         else if (v === 'credito') { showView('credito'); cargarCompras(); }
+        else if (v === 'resumen') { showView('resumen'); if (!el.rFecha.value) el.rFecha.value = hoyISO(); }
         else { showView('historial'); cargarHistorial(); }
       });
     }

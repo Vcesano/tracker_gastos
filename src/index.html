@@ -16,6 +16,7 @@
         <button type="button" class="tab active" data-view="form">Cargar</button>
         <button type="button" class="tab" data-view="historial">Historial</button>
         <button type="button" class="tab" data-view="credito">Crédito</button>
+        <button type="button" class="tab" data-view="resumen">Pago Bulk</button>
         <button type="button" class="tab" data-view="maestros">Maestros</button>
       </nav>
 
@@ -112,6 +113,20 @@
               <select id="h-medio"></select>
             </label>
           </div>
+          <div class="filtros-row">
+            <label class="field">
+              <span>Crédito</span>
+              <select id="h-cuotas">
+                <option value="" selected>Todos</option>
+                <option value="solo">Solo cuotas</option>
+                <option value="sin">Solo directos</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Tarjeta</span>
+              <select id="h-tarjeta"></select>
+            </label>
+          </div>
         </div>
         <p class="muted" id="hist-resumen"></p>
         <div id="hist-list"></div>
@@ -199,6 +214,38 @@
 
         <p class="muted" id="c-resumen"></p>
         <div id="c-list"></div>
+      </section>
+
+      <!-- ===== Vista: Resumen de tarjeta (batch) ===== -->
+      <section class="card view" id="resumen-card" data-view="resumen" hidden>
+        <h2 class="card-title">Cargar resumen de tarjeta</h2>
+
+        <div id="r-config">
+          <label class="field">
+            <span>Tarjeta</span>
+            <select id="r-tarjeta" required></select>
+          </label>
+          <label class="field">
+            <span>Fecha de pago</span>
+            <input type="date" id="r-fecha" required>
+          </label>
+          <label class="field">
+            <span>Se paga con <em class="opt">(cuenta del resumen)</em></span>
+            <select id="r-medio" required></select>
+          </label>
+          <button type="button" id="r-generar" class="btn">Generar grilla</button>
+        </div>
+
+        <div id="r-grid-wrap" hidden>
+          <div class="edit-banner">
+            <span id="r-grid-info"></span>
+            <button type="button" id="r-reset" class="link">Cambiar tarjeta</button>
+          </div>
+          <div id="r-grid"></div>
+          <button type="button" id="r-add-suelto" class="btn-sec">➕ Agregar gasto suelto</button>
+          <p class="muted" id="r-total"></p>
+          <button type="button" id="r-confirmar" class="btn">Confirmar y cargar</button>
+        </div>
       </section>
 
       <!-- ===== Vista: Maestros (ABM) ===== -->

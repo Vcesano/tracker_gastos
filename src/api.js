@@ -148,6 +148,8 @@ function listarGastos(filtros) {
     var catF = String(filtros.categoria || '').trim();
     var subF = String(filtros.subcategoria || '').trim();
     var medF = String(filtros.medio_pago_id || '').trim();
+    var cuotasF = String(filtros.cuotas || '').trim();      // ''|'solo'|'sin'
+    var tarjF = String(filtros.tarjeta_id || '').trim();    // filtra por tarjeta de la cuota
 
     // Info de categoría por id (incluye inactivas para que un gasto viejo resuelva).
     var catInfo = {};
@@ -159,10 +161,18 @@ function listarGastos(filtros) {
     var medLabel = {};
     leerTabla_('MediosPago').forEach(function (m) { medLabel[String(m.id)] = String(m.entidad || ''); });
 
+    // Tarjeta de cada compra a crédito, para derivar la tarjeta real de una cuota
+    // (el medio_pago_id de la cuota es la CUENTA que paga el resumen, no la tarjeta).
+    var compraCard = {};
+    leerTabla_('ComprasCredito').forEach(function (c) { compraCard[String(c.id)] = String(c.medio_pago_id || ''); });
+
     var gastos = leerTabla_('Gastos').map(function (g) {
       var cid = String(g.categoria_id || ''), mid = String(g.medio_pago_id || '');
       var info = catInfo[cid] || { categoria: '', subcategoria: '', label: cid };
       var nro = g.nro_cuota === '' || g.nro_cuota === null ? '' : (Number(g.nro_cuota) || '');
+      var compraId = String(g.compra_credito_id || '').trim();
+      var esCuota = compraId !== '';
+      var tarjetaId = esCuota ? (compraCard[compraId] || '') : '';
       return {
         id: String(g.id),
         fecha: fechaISO_(g.fecha),
@@ -175,8 +185,10 @@ function listarGastos(filtros) {
         medio_label: medLabel[mid] || mid,
         monto: Number(g.monto) || 0,
         moneda: String(g.moneda || ''),
-        es_cuota: String(g.compra_credito_id || '').trim() !== '',
-        nro_cuota: nro
+        es_cuota: esCuota,
+        nro_cuota: nro,
+        tarjeta_id: tarjetaId,
+        tarjeta_label: tarjetaId ? (medLabel[tarjetaId] || tarjetaId) : ''
       };
     }).filter(function (g) {
       if (desde && g.fecha < desde) return false;   // ISO yyyy-mm-dd ordena cronológicamente
@@ -184,6 +196,9 @@ function listarGastos(filtros) {
       if (catF && g.categoria !== catF) return false;
       if (subF && g.subcategoria !== subF) return false;
       if (medF && g.medio_pago_id !== medF) return false;
+      if (cuotasF === 'solo' && !g.es_cuota) return false;
+      if (cuotasF === 'sin' && g.es_cuota) return false;
+      if (tarjF && g.tarjeta_id !== tarjF) return false;
       return true;
     });
 
@@ -410,6 +425,123 @@ function borrarCompra(id) {
     var ok = borrarFila_('ComprasCredito', id);
     if (!ok) return { ok: false, error: 'No se encontró la compra.' };
     return { ok: true, data: { id: id } };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Confirma un "resumen de tarjeta" (slice 2b): inserta en `Gastos`, en una sola
+ * escritura batch atómica, todas las cuotas tildadas + gastos sueltos de la
+ * grilla. `payload` = { fecha, medio_pago_id (cuenta que paga el resumen, NO
+ * crédito), items:[{ compra_credito_id?, categoria_id, monto, moneda, descripcion }] }.
+ *
+ * El `nro_cuota` se calcula en el server desde el estado fresco (pagadas+seq),
+ * no se confía en el cliente. Se bloquea vincular más cuotas que las pendientes.
+ * Si alguna cuota ya tiene un pago con la MISMA fecha y `forzar` es falso, no
+ * inserta nada y devuelve { requiereConfirmacion:true, duplicados:[...] } para
+ * que el cliente confirme antes de duplicar.
+ */
+function confirmarResumen(payload, forzar) {
+  try {
+    payload = payload || {};
+    var fecha = String(payload.fecha || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+      return { ok: false, error: 'Fecha de pago inválida (se espera yyyy-mm-dd).' };
+    }
+
+    var medioId = String(payload.medio_pago_id || '').trim();
+    if (!medioId) return { ok: false, error: 'Elegí el medio con el que se paga el resumen.' };
+    var medio = leerTabla_('MediosPago').filter(function (m) { return String(m.id) === medioId; })[0];
+    if (!medio || !esActivo_(medio.activo)) {
+      return { ok: false, error: 'El medio de pago no existe o está inactivo.' };
+    }
+    if (String(medio.tipo_medio).trim() === 'Credito') {
+      return { ok: false, error: 'El resumen se paga con una cuenta (Efectivo o Débito), no con otra tarjeta de crédito.' };
+    }
+
+    var items = payload.items || [];
+    if (!items.length) return { ok: false, error: 'No hay nada para cargar. Tildá al menos una cuota o agregá un gasto.' };
+
+    var catActivas = {};
+    leerTabla_('Categorias').forEach(function (c) { if (esActivo_(c.activo)) catActivas[String(c.id)] = true; });
+
+    var comprasById = {};
+    leerTabla_('ComprasCredito').forEach(function (c) { comprasById[String(c.id)] = c; });
+
+    // Estado fresco de pagos: conteo por compra + set (compra|fecha) para dups.
+    var pagosCount = {}, pagosFecha = {};
+    leerTabla_('Gastos').forEach(function (g) {
+      var cid = String(g.compra_credito_id || '').trim();
+      if (!cid) return;
+      pagosCount[cid] = (pagosCount[cid] || 0) + 1;
+      pagosFecha[cid + '|' + fechaISO_(g.fecha)] = true;
+    });
+
+    var normal = [], seqPorCompra = {}, duplicados = [];
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i] || {};
+      var monto = Number(it.monto);
+      if (!isFinite(monto) || monto <= 0) return { ok: false, error: 'Hay un monto inválido (debe ser mayor a 0).' };
+      var moneda = String(it.moneda || 'ARS').trim().toUpperCase();
+      if (MONEDAS_VALIDAS.indexOf(moneda) < 0) return { ok: false, error: 'Moneda inválida en un ítem (ARS o USD).' };
+      var catId = String(it.categoria_id || '').trim();
+      if (!catId || !catActivas[catId]) return { ok: false, error: 'Hay un ítem con categoría inválida o inactiva.' };
+      var desc = String(it.descripcion || '').trim();
+      var compraId = String(it.compra_credito_id || '').trim();
+      var nroCuota = '';
+
+      if (compraId) {
+        var compra = comprasById[compraId];
+        if (!compra) return { ok: false, error: 'Una cuota referencia una compra inexistente.' };
+        var nCuotas = Number(compra.n_cuotas) || 0;
+        var pagadas = (Number(compra.cuotas_previas) || 0) + (pagosCount[compraId] || 0);
+        var seq = (seqPorCompra[compraId] || 0) + 1;
+        seqPorCompra[compraId] = seq;
+        var pendientes = nCuotas - pagadas;
+        if (seq > pendientes) {
+          return { ok: false, error: 'La compra "' + (compra.descripcion || compraId) + '" no tiene tantas cuotas pendientes (quedan ' + Math.max(0, pendientes) + ').' };
+        }
+        nroCuota = pagadas + seq;
+        if (pagosFecha[compraId + '|' + fecha]) duplicados.push(compra.descripcion || compraId);
+
+        // Descripción por default de la cuota: "Cuota N/M - <compra>". El pago
+        // conserva su categoría real; esto solo lo hace identificable en el
+        // Historial. Editable: si el cliente mandó texto, se respeta.
+        if (!desc) {
+          var base = String(compra.descripcion || '').trim();
+          desc = 'Cuota ' + nroCuota + '/' + nCuotas + (base ? ' - ' + base : '');
+        }
+      }
+
+      normal.push({
+        compra_credito_id: compraId, categoria_id: catId, monto: monto,
+        moneda: moneda, descripcion: desc, nro_cuota: nroCuota
+      });
+    }
+
+    if (!forzar && duplicados.length) {
+      return { ok: true, data: { requiereConfirmacion: true, duplicados: duplicados } };
+    }
+
+    var creado = ahoraISO_();
+    var filas = normal.map(function (n) {
+      return {
+        id: nuevoId_(),
+        fecha: fecha,
+        descripcion: n.descripcion,
+        categoria_id: n.categoria_id,
+        medio_pago_id: medioId,
+        monto: n.monto,
+        moneda: n.moneda,
+        compra_credito_id: n.compra_credito_id,
+        nro_cuota: n.nro_cuota,
+        creado_en: creado
+      };
+    });
+
+    insertarFilas_('Gastos', filas);
+    return { ok: true, data: { insertados: filas.length } };
   } catch (e) {
     return { ok: false, error: e.message };
   }
