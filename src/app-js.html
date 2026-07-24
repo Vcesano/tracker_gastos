@@ -657,7 +657,8 @@
         bEd.addEventListener('click', function () { abrirEditor(it); });
         var bTog = document.createElement('button');
         bTog.type = 'button';
-        bTog.className = 'icon-btn ' + (it.activo ? 'danger' : 'ok');
+        // Desactivar es reversible (ámbar); el rojo queda para Eliminar.
+        bTog.className = 'icon-btn ' + (it.activo ? 'warn' : 'ok');
         bTog.textContent = it.activo ? '⦸ Desactivar' : '✓ Activar';
         bTog.addEventListener('click', function () { toggleActivoMaestro(it); });
         var bDel = document.createElement('button');

@@ -1,12 +1,15 @@
 <style>
   /* =========================================================
-     Tema (It 3a) — dark, sobre la paleta de marca de Valentin:
+     Tema (It 3a) — dark, sobre la paleta de marca de Valentin.
+     Los colores de marca dan la identidad; los estados usan el color
+     que la gente espera (rojo = borrar, ámbar = ojo con esto).
        #57CC99 (verde)  → accent: acciones primarias, activo, ok
-       #E06C9F (rosa)   → destructivo + badges de cuota
        #1E3A5F (azul)   → superficies de énfasis (banners, cabeceras)
        #EAEAEA (claro)  → texto
        #222831 (grafito)→ cards; el fondo va un escalón más oscuro
                            para que las cards se despeguen.
+       #E06C9F (rosa)   → acento puntual (progreso de cuotas en curso).
+     Estados fuera de marca: rojo destructivo, ámbar de advertencia/cuota.
      ========================================================= */
   :root {
     --bg: #1b2027;
@@ -25,10 +28,13 @@
     --deep-border: #2c5183;
 
     --pink: #e06c9f;
-    --pink-soft: rgba(224, 108, 159, 0.15);
+
+    --warn: #e8a33d;
+    --warn-soft: rgba(232, 163, 61, 0.15);
 
     --ok: #57cc99;
-    --err: #e06c9f;
+    --err: #e5534b;
+    --err-soft: rgba(229, 83, 75, 0.14);
     --radius: 14px;
     --pad: 16px;
   }
@@ -302,8 +308,8 @@
     display: inline-block;
     font-size: 0.68rem;
     font-weight: 700;
-    color: var(--pink);
-    background: var(--pink-soft);
+    color: var(--warn);
+    background: var(--warn-soft);
     border-radius: 6px;
     padding: 1px 6px;
     margin-left: 6px;
@@ -319,7 +325,8 @@
     padding: 4px;
   }
   .icon-btn:hover { color: var(--text); }
-  .icon-btn.danger { color: var(--err); }
+  .icon-btn.danger { color: var(--err); }   /* eliminar / borrar: irreversible */
+  .icon-btn.warn { color: var(--warn); }    /* desactivar: reversible */
   .icon-btn.ok { color: var(--ok); }
 
   .gasto.inactivo { opacity: 0.5; }
@@ -387,8 +394,8 @@
     display: inline-block;
     font-size: 0.72rem;
     font-weight: 700;
-    color: var(--pink);
-    background: var(--pink-soft);
+    color: var(--warn);
+    background: var(--warn-soft);
     border-radius: 6px;
     padding: 1px 6px;
     margin-left: 6px;
@@ -472,7 +479,7 @@
     z-index: 10;
   }
   .toast.ok  { background: #1f6b52; border-color: #2c8a6b; color: #eafff5; }
-  .toast.err { background: #7d3253; border-color: #a34a72; color: #ffeef5; }
+  .toast.err { background: #7a2f2b; border-color: #a8453d; color: #ffeceb; }
 
   /* =========================================================
      Desktop (It 3a): hasta acá todo es la vista mobile. A partir
@@ -542,7 +549,15 @@
     #c-nuevo,
     #m-nuevo { display: inline-block; }
     #m-editor > .btn-sec { margin-top: 8px; margin-left: 10px; }
-    #r-config > .btn { align-self: end; }
+
+    /* "Generar grilla" comparte fila con "Se paga con": lo bajamos al pie de
+       la celda descontando el margin del .field y le damos la misma altura
+       que el select, para que ambos queden centrados a la misma línea. */
+    #r-config > .btn {
+      align-self: end;
+      min-height: 48px;
+      margin: 0 0 14px;
+    }
 
     /* Filtros: un poco más de aire y campos que no se estiren de más. */
     .filtros-row { gap: 16px; }
