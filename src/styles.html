@@ -465,6 +465,46 @@
   }
   .editor-title { font-size: 1rem; margin: 0 0 12px; }
 
+  /* --- Skeleton de carga (It 3b) ---
+     Placeholder con la silueta de una fila de lista, para que la espera tenga
+     forma en vez de ser una tarjeta vacía. */
+  .skel-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 0;
+    border-top: 1px solid var(--border);
+  }
+  .skel-row:first-child { border-top: none; }
+  .skel-col { flex: 1; min-width: 0; }
+  .skel-bar {
+    height: 11px;
+    border-radius: 6px;
+    background: linear-gradient(90deg, #2a313c 25%, #39424f 50%, #2a313c 75%);
+    background-size: 400% 100%;
+    animation: skel-shimmer 1.4s ease-in-out infinite;
+  }
+  .skel-bar + .skel-bar { margin-top: 9px; }
+  .skel-bar.w60 { width: 60%; }
+  .skel-bar.w40 { width: 40%; height: 9px; }
+  .skel-bar.w80 { width: 80px; }
+  @keyframes skel-shimmer {
+    0%   { background-position: 100% 0; }
+    100% { background-position: 0 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .skel-bar { animation: none; }
+  }
+
+  /* Ícono que gira mientras el botón ↻ Actualizar está trabajando. */
+  .spin-ico { display: inline-block; }
+  .is-loading .spin-ico { animation: spin 0.9s linear infinite; }
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+
   /* --- Toast --- */
   .toast {
     position: fixed;

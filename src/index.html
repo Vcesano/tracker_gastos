@@ -9,7 +9,7 @@
     <main class="app">
       <header class="topbar">
         <h1>Gastos</h1>
-        <button type="button" id="btn-refresh" class="link" title="Actualizar datos" hidden>↻ Actualizar</button>
+        <button type="button" id="btn-refresh" class="link" title="Actualizar datos" hidden><span class="spin-ico">↻</span> Actualizar</button>
       </header>
 
       <nav class="tabs" id="tabs" hidden>
@@ -338,6 +338,8 @@
       <div id="toast" class="toast" hidden></div>
     </main>
 
+    <!-- Catálogos inyectados por doGet (It 3b): la app arranca sin pedirlos. -->
+    <script>window.__BOOT__ = <?!= boot ?>;</script>
     <?!= include('app-js'); ?>
   </body>
 </html>

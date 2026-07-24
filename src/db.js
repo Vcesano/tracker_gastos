@@ -11,16 +11,43 @@
  *  indexar_, SCHEMA. No se redeclaran acá.
  */
 
+/**
+ * Memo de la spreadsheet abierta (It 3b). openById es lo caro de una lectura,
+ * y un request como listarGastos leía 4 tablas → 4 aperturas. La variable vive
+ * lo que dura la ejecución del script (un request), así que no puede quedar
+ * desactualizada entre requests.
+ */
+var SS_MEMO_ = null;
+
 /** Abre la spreadsheet de trabajo (la COPIA). */
 function abrirSS_() {
-  return SpreadsheetApp.openById(getSheetId_());
+  if (!SS_MEMO_) SS_MEMO_ = SpreadsheetApp.openById(getSheetId_());
+  return SS_MEMO_;
+}
+
+/**
+ * Cache de tablas ya leídas en ESTA ejecución (It 3b). Varias funciones de
+ * api.js leen la misma pestaña dos veces (validar + listar); con esto se lee
+ * una sola vez por request. Las escrituras de acá abajo invalidan la entrada
+ * afectada, así que una lectura posterior a un write ve los datos nuevos.
+ */
+var TABLA_MEMO_ = {};
+
+/** Invalida el cache de lectura: una pestaña, o todas si no se pasa nombre. */
+function invalidarTabla_(nombre) {
+  if (nombre) delete TABLA_MEMO_[nombre];
+  else TABLA_MEMO_ = {};
 }
 
 /**
  * Lee una pestaña operacional completa como array de objetos, con las claves
  * tomadas de la fila 1 (el contrato de headers). Vacía → [].
+ *
+ * OJO: el resultado viene del cache de ejecución y se comparte entre llamadas.
+ * Los consumidores solo leen (map/filter/forEach); no mutar los objetos.
  */
 function leerTabla_(nombre) {
+  if (Object.prototype.hasOwnProperty.call(TABLA_MEMO_, nombre)) return TABLA_MEMO_[nombre];
   var hoja = abrirSS_().getSheetByName(nombre);
   if (!hoja) throw new Error('No existe la pestaña "' + nombre + '".');
   var lr = hoja.getLastRow(), lc = hoja.getLastColumn();
@@ -28,11 +55,13 @@ function leerTabla_(nombre) {
   var headers = hoja.getRange(1, 1, 1, lc).getValues()[0].map(function (h) { return String(h).trim(); });
   if (lr < 2) return [];
   var rows = hoja.getRange(2, 1, lr - 1, lc).getValues();
-  return rows.map(function (r) {
+  var datos = rows.map(function (r) {
     var o = {};
     headers.forEach(function (h, i) { o[h] = r[i]; });
     return o;
   });
+  TABLA_MEMO_[nombre] = datos;
+  return datos;
 }
 
 /**
@@ -60,6 +89,7 @@ function insertarFilas_(nombre, objetos) {
     var start = hoja.getLastRow() + 1;
     hoja.getRange(start, 1, filas.length, headers.length).setValues(filas);
     SpreadsheetApp.flush();
+    invalidarTabla_(nombre);
     return filas.length;
   } finally {
     lock.releaseLock();
@@ -93,6 +123,7 @@ function actualizarFila_(nombre, id, cambios) {
       });
       hoja.getRange(i + 2, 1, 1, lc).setValues([valores[i]]);
       SpreadsheetApp.flush();
+      invalidarTabla_(nombre);
       return true;
     }
     return false;
@@ -124,6 +155,7 @@ function borrarFila_(nombre, id) {
       if (String(ids[i][0]) === String(id)) {
         hoja.deleteRow(i + 2);
         SpreadsheetApp.flush();
+        invalidarTabla_(nombre);
         return true;
       }
     }

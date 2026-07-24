@@ -182,6 +182,41 @@
       if (keep) sel.value = keep;
     }
 
+    // ---- Cache de vistas (It 3b) ----
+    // Cambiar de pestaña disparaba siempre un google.script.run, y cada viaje
+    // al server de Apps Script cuesta ~1s aunque los datos no hayan cambiado.
+    // Ahora se guarda lo último que trajo cada vista: al volver, se pinta al
+    // instante y solo se revalida en silencio si pasó más de REVALIDAR_MS.
+    // Toda escritura borra el cache (invalidarCache), igual que el botón ↻.
+    // Como la app es el único escritor, el cache no puede quedar desfasado
+    // salvo que se edite la Sheet a mano: para eso está ↻.
+    var REVALIDAR_MS = 90000;
+    var cacheVistas = {};
+
+    // `key` distingue combinaciones de filtros: si cambian, es otro resultado.
+    function cacheGet(zona, key) {
+      var e = cacheVistas[zona];
+      return (e && e.key === key) ? e : null;
+    }
+
+    function cacheSet(zona, key, data) {
+      cacheVistas[zona] = { key: key, data: data, ts: Date.now() };
+    }
+
+    function invalidarCache() { cacheVistas = {}; }
+
+    // Silueta de lista mientras se espera al server (solo la primera vez que
+    // se abre una vista; con cache no llega a verse).
+    function skeleton(cont, filas) {
+      var html = '';
+      for (var i = 0; i < (filas || 5); i++) {
+        html += '<div class="skel-row"><div class="skel-col">' +
+                '<div class="skel-bar w60"></div><div class="skel-bar w40"></div>' +
+                '</div><div class="skel-bar w80"></div></div>';
+      }
+      cont.innerHTML = html;
+    }
+
     var toastTimer = null;
     function toast(msg, tipo) {
       el.toast.textContent = msg;
@@ -332,10 +367,10 @@
       cargarHistorial();
     }
 
-    function cargarHistorial() {
-      el.histResumen.textContent = 'Cargando…';
-      el.histList.innerHTML = '';
-      var filtros = {
+    // Estado actual de los filtros. Único lugar donde se arma el objeto, para
+    // que la clave de cache sea siempre la misma (la usa también la precarga).
+    function filtrosHistorial() {
+      return {
         desde: el.hDesde.value,
         hasta: el.hHasta.value,
         categoria: el.hCategoria.value,
@@ -344,14 +379,33 @@
         cuotas: el.hCuotas.value,
         tarjeta_id: el.hTarjeta.value
       };
+    }
+
+    function cargarHistorial() {
+      var filtros = filtrosHistorial();
+      var key = JSON.stringify(filtros);
+      var hit = cacheGet('historial', key);
+      if (hit) {
+        histActuales = hit.data;
+        renderHistorial(histActuales);
+        if (Date.now() - hit.ts < REVALIDAR_MS) return;   // fresco: ni pedimos
+      } else {
+        el.histResumen.textContent = 'Cargando…';
+        skeleton(el.histList, 6);
+      }
       google.script.run
         .withSuccessHandler(function (res) {
-          if (!res || !res.ok) { el.histResumen.textContent = '✗ ' + ((res && res.error) || 'Error al listar.'); return; }
+          if (!res || !res.ok) {
+            if (!hit) el.histResumen.textContent = '✗ ' + ((res && res.error) || 'Error al listar.');
+            return;
+          }
           histActuales = res.data.gastos || [];
+          cacheSet('historial', key, histActuales);
           renderHistorial(histActuales);
         })
         .withFailureHandler(function (err) {
-          el.histResumen.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
+          // Si ya había algo pintado desde el cache, no lo tapamos con el error.
+          if (!hit) el.histResumen.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
         })
         .listarGastos(filtros);
     }
@@ -424,7 +478,7 @@
         t.disabled = true;
         google.script.run
           .withSuccessHandler(function (res) {
-            if (res && res.ok) { toast('✓ Gasto borrado', 'ok'); cargarHistorial(); }
+            if (res && res.ok) { invalidarCache(); toast('✓ Gasto borrado', 'ok'); cargarHistorial(); }
             else { t.disabled = false; toast('✗ ' + ((res && res.error) || 'No se pudo borrar.'), 'err'); }
           })
           .withFailureHandler(function (err) {
@@ -460,6 +514,7 @@
         .withSuccessHandler(function (res) {
           el.submit.disabled = false;
           if (res && res.ok) {
+            invalidarCache();   // el gasto cambia historial y, si es cuota, crédito
             if (editando) {
               toast('✓ Cambios guardados', 'ok');
               enterCreateMode();
@@ -538,6 +593,7 @@
         el.mSave.disabled = false;
         el.mSave.textContent = 'Guardar';
         if (res && res.ok) {
+          invalidarCache();   // cambian las etiquetas que ven todas las vistas
           toast('✓ Guardado', 'ok');
           cerrarEditor();
           cargarMaestros();
@@ -574,7 +630,7 @@
       var accion = item.activo ? 'desactivar' : 'activar';
       if (!window.confirm('¿Seguro que querés ' + accion + ' este maestro?')) return;
       function done(res) {
-        if (res && res.ok) { toast('✓ Actualizado', 'ok'); cargarMaestros(); refrescarCatalogos(); }
+        if (res && res.ok) { invalidarCache(); toast('✓ Actualizado', 'ok'); cargarMaestros(); refrescarCatalogos(); }
         else { toast('✗ ' + ((res && res.error) || 'No se pudo actualizar.'), 'err'); }
       }
       function fail(err) { toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err'); }
@@ -590,7 +646,7 @@
       var etiqueta = esCat ? (item.categoria + (item.subcategoria ? ' › ' + item.subcategoria : '')) : item.entidad;
       if (!window.confirm('¿Eliminar definitivamente "' + etiqueta + '"?\nSolo se puede si ningún gasto o compra lo usa.')) return;
       function done(res) {
-        if (res && res.ok) { toast('✓ Eliminado', 'ok'); cargarMaestros(); refrescarCatalogos(); }
+        if (res && res.ok) { invalidarCache(); toast('✓ Eliminado', 'ok'); cargarMaestros(); refrescarCatalogos(); }
         else { toast('✗ ' + ((res && res.error) || 'No se pudo eliminar.'), 'err'); }
       }
       function fail(err) { toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err'); }
@@ -677,19 +733,32 @@
     }
 
     function cargarMaestros() {
-      el.mResumen.textContent = 'Cargando…';
-      el.mList.innerHTML = '';
       cerrarEditor();
+      var hit = cacheGet('maestros', 'x');
+      if (hit) {
+        maestros.categorias = hit.data.categorias;
+        maestros.medios = hit.data.medios;
+        refrescarDatalists();
+        renderMaestros();
+        if (Date.now() - hit.ts < REVALIDAR_MS) return;
+      } else {
+        el.mResumen.textContent = 'Cargando…';
+        skeleton(el.mList, 6);
+      }
       google.script.run
         .withSuccessHandler(function (res) {
-          if (!res || !res.ok) { el.mResumen.textContent = '✗ ' + ((res && res.error) || 'Error al cargar.'); return; }
+          if (!res || !res.ok) {
+            if (!hit) el.mResumen.textContent = '✗ ' + ((res && res.error) || 'Error al cargar.');
+            return;
+          }
           maestros.categorias = res.data.categorias || [];
           maestros.medios = res.data.medios || [];
+          cacheSet('maestros', 'x', { categorias: maestros.categorias, medios: maestros.medios });
           refrescarDatalists();
           renderMaestros();
         })
         .withFailureHandler(function (err) {
-          el.mResumen.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
+          if (!hit) el.mResumen.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
         })
         .getMaestros();
     }
@@ -795,7 +864,7 @@
       el.cSave.disabled = true; el.cSave.textContent = 'Guardando…';
       function done(res) {
         el.cSave.disabled = false; el.cSave.textContent = 'Guardar';
-        if (res && res.ok) { toast('✓ Guardado', 'ok'); cerrarEditorCompra(); cargarCompras(); }
+        if (res && res.ok) { invalidarCache(); toast('✓ Guardado', 'ok'); cerrarEditorCompra(); cargarCompras(); }
         else { toast('✗ ' + ((res && res.error) || 'No se pudo guardar.'), 'err'); }
       }
       function fail(err) {
@@ -811,7 +880,7 @@
     function eliminarCompra(compra) {
       if (!window.confirm('¿Eliminar la compra "' + (compra.descripcion || 'sin descripción') + '"?\nSolo se puede si no tiene cuotas pagadas.')) return;
       function done(res) {
-        if (res && res.ok) { toast('✓ Eliminada', 'ok'); cargarCompras(); }
+        if (res && res.ok) { invalidarCache(); toast('✓ Eliminada', 'ok'); cargarCompras(); }
         else { toast('✗ ' + ((res && res.error) || 'No se pudo eliminar.'), 'err'); }
       }
       function fail(err) { toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err'); }
@@ -889,18 +958,30 @@
     }
 
     function cargarCompras() {
-      el.cResumen.textContent = 'Cargando…';
-      el.cList.innerHTML = '';
       cerrarEditorCompra();
       var filtros = { medio_pago_id: el.cFiltroTarjeta.value, estado: el.cFiltroEstado.value };
+      var key = JSON.stringify(filtros);
+      var hit = cacheGet('compras', key);
+      if (hit) {
+        compras = hit.data;
+        renderCompras(compras);
+        if (Date.now() - hit.ts < REVALIDAR_MS) return;
+      } else {
+        el.cResumen.textContent = 'Cargando…';
+        skeleton(el.cList, 4);
+      }
       google.script.run
         .withSuccessHandler(function (res) {
-          if (!res || !res.ok) { el.cResumen.textContent = '✗ ' + ((res && res.error) || 'Error al listar.'); return; }
+          if (!res || !res.ok) {
+            if (!hit) el.cResumen.textContent = '✗ ' + ((res && res.error) || 'Error al listar.');
+            return;
+          }
           compras = res.data.compras || [];
+          cacheSet('compras', key, compras);
           renderCompras(compras);
         })
         .withFailureHandler(function (err) {
-          el.cResumen.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
+          if (!hit) el.cResumen.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
         })
         .listarCompras(filtros);
     }
@@ -989,17 +1070,30 @@
     }
 
     function cargarPendientes() {
-      el.pResumen.textContent = 'Cargando…';
-      el.pList.innerHTML = '';
+      var filtros = { medio_pago_id: el.pTarjeta.value, estado: 'pendientes' };
+      var key = JSON.stringify(filtros);
+      var hit = cacheGet('pendientes', key);
+      if (hit) {
+        renderPendientes(hit.data);
+        if (Date.now() - hit.ts < REVALIDAR_MS) return;
+      } else {
+        el.pResumen.textContent = 'Cargando…';
+        skeleton(el.pList, 4);
+      }
       google.script.run
         .withSuccessHandler(function (res) {
-          if (!res || !res.ok) { el.pResumen.textContent = '✗ ' + ((res && res.error) || 'Error al listar.'); return; }
-          renderPendientes(res.data.compras || []);
+          if (!res || !res.ok) {
+            if (!hit) el.pResumen.textContent = '✗ ' + ((res && res.error) || 'Error al listar.');
+            return;
+          }
+          var lista = res.data.compras || [];
+          cacheSet('pendientes', key, lista);
+          renderPendientes(lista);
         })
         .withFailureHandler(function (err) {
-          el.pResumen.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
+          if (!hit) el.pResumen.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
         })
-        .listarCompras({ medio_pago_id: el.pTarjeta.value, estado: 'pendientes' });
+        .listarCompras(filtros);
     }
 
     // ---- Resumen de tarjeta (batch, slice 2b) ----
@@ -1249,6 +1343,7 @@
           }
           restore();
           if (res && res.ok) {
+            invalidarCache();   // entraron gastos: cambian historial y crédito
             toast('✓ ' + res.data.insertados + ' gasto(s) cargados', 'ok');
             resetResumen();
             showView('historial');
@@ -1314,32 +1409,65 @@
     }
 
     // ---- Carga inicial ----
+    function errorArranque(msg) {
+      el.loadingStatus.textContent = '✗ ' + msg;
+      el.loadingStatus.className = 'err';
+    }
+
+    // Deja la app usable con los catálogos ya en la mano.
+    function arrancar(data) {
+      if (!(data.categorias || []).length || !(data.medios || []).length) {
+        errorArranque('Faltan categorías o medios de pago activos en la Sheet.');
+        return;
+      }
+      reconstruirDesdeCatalogos(data);
+      fillFiltro(el.hSubcategoria, [], 'Todo seleccionado', true);
+
+      enterCreateMode();
+      el.loadingCard.hidden = true;
+      el.tabs.hidden = false;
+      el.btnRefresh.hidden = false;
+      showView('form');
+      precargarHistorial();
+    }
+
+    // El historial es la vista a la que más se entra: la traemos en segundo
+    // plano apenas arranca la app, así el primer clic ya la encuentra cacheada.
+    function precargarHistorial() {
+      var filtros = filtrosHistorial();
+      var key = JSON.stringify(filtros);
+      if (cacheGet('historial', key)) return;
+      google.script.run
+        .withSuccessHandler(function (res) {
+          if (!res || !res.ok) return;
+          cacheSet('historial', key, res.data.gastos || []);
+          // Si mientras tanto entró al Historial con estos mismos filtros,
+          // lo pintamos; si cambió los filtros, no le pisamos la vista.
+          if (viewActual === 'historial' && JSON.stringify(filtrosHistorial()) === key) {
+            histActuales = res.data.gastos || [];
+            renderHistorial(histActuales);
+          }
+        })
+        .withFailureHandler(function () {})
+        .listarGastos(filtros);
+    }
+
     function cargarCatalogos() {
+      // Camino rápido: doGet ya los mandó dentro del HTML (It 3b).
+      var boot = window.__BOOT__;
+      if (boot && boot.catalogos) { arrancar(boot.catalogos); return; }
+
+      // Fallback: pedirlos por nuestra cuenta.
       google.script.run
         .withSuccessHandler(function (res) {
           if (!res || !res.ok) {
-            el.loadingStatus.textContent = '✗ ' + ((res && res.error) || 'No se pudieron cargar los catálogos.');
-            el.loadingStatus.className = 'err';
+            errorArranque((res && res.error) || 'No se pudieron cargar los catálogos.');
             return;
           }
-          if (!(res.data.categorias || []).length || !(res.data.medios || []).length) {
-            el.loadingStatus.textContent = '✗ Faltan categorías o medios de pago activos en la Sheet.';
-            el.loadingStatus.className = 'err';
-            return;
-          }
-
-          reconstruirDesdeCatalogos(res.data);
-          fillFiltro(el.hSubcategoria, [], 'Todo seleccionado', true);
-
-          enterCreateMode();
-          el.loadingCard.hidden = true;
-          el.tabs.hidden = false;
-          el.btnRefresh.hidden = false;
-          showView('form');
+          arrancar(res.data);
         })
         .withFailureHandler(function (err) {
-          el.loadingStatus.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
-          el.loadingStatus.className = 'err';
+          errorArranque('Error de conexión: ' + (err && err.message ? err.message : err));
         })
         .getCatalogos();
     }
@@ -1398,11 +1526,15 @@
     attachPicker(el.cFecha);
     attachPicker(el.rFecha);
 
-    // Botón global: re-sincroniza catálogos y recarga la vista actual.
+    // Botón global: tira el cache, re-sincroniza catálogos y recarga la vista
+    // actual. Es la salida cuando se editó la Sheet a mano. Gira mientras carga.
     el.btnRefresh.addEventListener('click', function () {
       el.btnRefresh.disabled = true;
+      el.btnRefresh.classList.add('is-loading');
+      invalidarCache();
       refrescarCatalogos(function (res) {
         el.btnRefresh.disabled = false;
+        el.btnRefresh.classList.remove('is-loading');
         if (res && res.ok) {
           toast('✓ Datos actualizados', 'ok');
           if (viewActual === 'historial') cargarHistorial();
