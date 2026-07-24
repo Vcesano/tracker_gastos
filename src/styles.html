@@ -8,8 +8,9 @@
        #EAEAEA (claro)  → texto
        #222831 (grafito)→ cards; el fondo va un escalón más oscuro
                            para que las cards se despeguen.
-       #E06C9F (rosa)   → acento puntual (progreso de cuotas en curso).
      Estados fuera de marca: rojo destructivo, ámbar de advertencia/cuota.
+     (El rosa #E06C9F de la marca no se usa en la app: no aportaba y
+     competía con el ámbar y el rojo.)
      ========================================================= */
   :root {
     --bg: #1b2027;
@@ -27,7 +28,9 @@
     --deep: #1e3a5f;
     --deep-border: #2c5183;
 
-    --pink: #e06c9f;
+    /* Azul de marca aclarado: #1e3a5f no contrasta como barra sobre fondo
+       oscuro. Se usa para el progreso de cuotas en curso. */
+    --blue: #4a80c4;
 
     --warn: #e8a33d;
     --warn-soft: rgba(232, 163, 61, 0.15);
@@ -353,7 +356,7 @@
   }
   .progress-bar {
     height: 100%;
-    background: var(--pink);
+    background: var(--blue);
     border-radius: 6px 0 0 6px;
     transition: width 0.2s ease;
   }
