@@ -46,6 +46,7 @@
       hLimpiar: $('h-limpiar'),
       hToggle: $('h-toggle'),
       hFiltros: $('h-filtros'),
+      hBuscar: $('h-buscar'),
       histResumen: $('hist-resumen'),
       histList: $('hist-list'),
       // maestros
@@ -63,6 +64,10 @@
       mNuevo: $('m-nuevo'),
       mBuscar: $('m-buscar'),
       mEstado: $('m-estado'),
+      mFCategoria: $('m-f-categoria'),
+      mFSubcategoria: $('m-f-subcategoria'),
+      mFcWrap: $('m-fc-wrap'),
+      mFsWrap: $('m-fs-wrap'),
       mResumen: $('m-resumen'),
       mList: $('m-list'),
       dlTipos: $('dl-tipos'),
@@ -86,11 +91,13 @@
       cNuevo: $('c-nuevo'),
       cFiltroTarjeta: $('c-filtro-tarjeta'),
       cFiltroEstado: $('c-filtro-estado'),
+      cBuscar: $('c-buscar'),
       cResumen: $('c-resumen'),
       cList: $('c-list'),
       credCompras: $('cred-compras'),
       credPendientes: $('cred-pendientes'),
       pTarjeta: $('p-tarjeta'),
+      pBuscar: $('p-buscar'),
       pResumen: $('p-resumen'),
       pList: $('p-list'),
       // resumen de tarjeta (batch)
@@ -244,7 +251,7 @@
       el.modalTitle.textContent = opts.titulo || '¿Confirmás?';
       el.modalMsg.textContent = opts.mensaje || '';
       el.modalOk.textContent = opts.ok || 'Confirmar';
-      el.modalOk.className = 'btn' + (opts.danger ? ' danger' : '');
+      el.modalOk.className = 'btn' + (opts.danger ? ' danger' : (opts.warn ? ' warn' : ''));
       el.modal.hidden = false;
       el.modalOk.focus();
       return new Promise(function (resolve) { modalResolver = resolve; });
@@ -397,6 +404,7 @@
     }
 
     function limpiarFiltros() {
+      el.hBuscar.value = '';
       el.hDesde.value = ''; el.hHasta.value = '';
       el.hCategoria.value = '';
       fillFiltro(el.hSubcategoria, [], 'Todas', true);
@@ -439,6 +447,20 @@
       el.hLimpiar.disabled = (n === 0);   // sin filtros, no hay nada que limpiar
     }
 
+    // Búsqueda por texto: filtra en el cliente sobre lo ya traído del server, así
+    // no dispara un viaje por tecla ni ensucia la clave de cache (que depende de
+    // los filtros del server). Busca en descripción, categoría, medio y tarjeta.
+    function gastosFiltradosTexto() {
+      var q = (el.hBuscar.value || '').trim().toLowerCase();
+      if (!q) return histActuales;
+      return histActuales.filter(function (g) {
+        var hay = (g.descripcion || '') + ' ' + (g.categoria_label || '') + ' ' +
+                  (g.medio_label || '') + ' ' + (g.tarjeta_label || '');
+        return hay.toLowerCase().indexOf(q) >= 0;
+      });
+    }
+    function pintarHistorial() { renderHistorial(gastosFiltradosTexto()); }
+
     function cargarHistorial() {
       actualizarBotonFiltros();
       var filtros = filtrosHistorial();
@@ -446,7 +468,7 @@
       var hit = cacheGet('historial', key);
       if (hit) {
         histActuales = hit.data;
-        renderHistorial(histActuales);
+        pintarHistorial();
         if (Date.now() - hit.ts < REVALIDAR_MS) return;   // fresco: ni pedimos
       } else {
         el.histResumen.textContent = 'Cargando…';
@@ -460,7 +482,7 @@
           }
           histActuales = res.data.gastos || [];
           cacheSet('historial', key, histActuales);
-          renderHistorial(histActuales);
+          pintarHistorial();
         })
         .withFailureHandler(function (err) {
           // Si ya había algo pintado desde el cache, no lo tapamos con el error.
@@ -729,7 +751,8 @@
       confirmar({
         titulo: accion,
         mensaje: '¿Seguro que querés ' + accion.toLowerCase() + ' este maestro?',
-        ok: accion   // reversible: sin rojo
+        ok: accion,
+        warn: item.activo   // desactivar = alerta ámbar; activar = verde (positivo)
       }).then(function (ok) {
         if (!ok) return;
         function done(res) {
@@ -764,18 +787,41 @@
       });
     }
 
-    // Filtra por texto libre y por estado (activos | inactivos | todos).
+    // Filtra por texto libre, estado (activos | inactivos | todos) y —solo en
+    // Categorías— por los desplegables de categoría y subcategoría.
     function filtrarMaestros(items) {
       var esCat = masterActual === 'categorias';
       var q = (el.mBuscar.value || '').trim().toLowerCase();
       var estado = el.mEstado.value;
+      var fCat = esCat ? el.mFCategoria.value : '';
+      var fSub = esCat ? el.mFSubcategoria.value : '';
       return items.filter(function (it) {
         if (estado === 'activos' && !it.activo) return false;
         if (estado === 'inactivos' && it.activo) return false;
+        if (fCat && it.categoria !== fCat) return false;
+        if (fSub && it.subcategoria !== fSub) return false;
         if (!q) return true;
         var hay = esCat ? (it.tipo + ' ' + it.categoria + ' ' + it.subcategoria) : (it.tipo_medio + ' ' + it.entidad);
         return hay.toLowerCase().indexOf(q) >= 0;
       });
+    }
+
+    // Desplegables de categoría/subcategoría (cascada). Se pueblan desde los
+    // maestros; fillFiltro preserva la selección al refrescar.
+    function rebuildSubcatFiltroMaestros() {
+      var cat = el.mFCategoria.value;
+      var subs = distinct(
+        maestros.categorias.filter(function (c) { return c.categoria === cat && c.subcategoria; })
+                           .map(function (c) { return c.subcategoria; })
+      ).map(function (s) { return { value: s, label: s }; });
+      fillFiltro(el.mFSubcategoria, subs, 'Todas', true);
+      el.mFSubcategoria.disabled = !cat;
+    }
+    function refrescarFiltrosMaestros() {
+      var cats = distinct(maestros.categorias.map(function (c) { return c.categoria; }).filter(Boolean))
+        .map(function (cat) { return { value: cat, label: cat }; });
+      fillFiltro(el.mFCategoria, cats, 'Todas', true);
+      rebuildSubcatFiltroMaestros();
     }
 
     function renderMaestros() {
@@ -849,6 +895,7 @@
         maestros.categorias = hit.data.categorias;
         maestros.medios = hit.data.medios;
         refrescarDatalists();
+        refrescarFiltrosMaestros();
         renderMaestros();
         if (Date.now() - hit.ts < REVALIDAR_MS) return;
       } else {
@@ -865,6 +912,7 @@
           maestros.medios = res.data.medios || [];
           cacheSet('maestros', 'x', { categorias: maestros.categorias, medios: maestros.medios });
           refrescarDatalists();
+          refrescarFiltrosMaestros();
           renderMaestros();
         })
         .withFailureHandler(function (err) {
@@ -877,6 +925,10 @@
       masterActual = m;
       var subs = document.querySelectorAll('.subtab');
       for (var i = 0; i < subs.length; i++) subs[i].classList.toggle('active', subs[i].getAttribute('data-master') === m);
+      // Los filtros de categoría/subcategoría solo aplican a Categorías.
+      var esCat = m === 'categorias';
+      el.mFcWrap.hidden = !esCat;
+      el.mFsWrap.hidden = !esCat;
       cerrarEditor();
       renderMaestros();
     }
@@ -1073,6 +1125,17 @@
       el.cList.appendChild(frag);
     }
 
+    // Búsqueda por texto en Compras (client-side, sobre lo ya traído).
+    function comprasFiltradas() {
+      var q = (el.cBuscar.value || '').trim().toLowerCase();
+      if (!q) return compras;
+      return compras.filter(function (c) {
+        var hay = (c.descripcion || '') + ' ' + (c.tarjeta_label || '') + ' ' + (c.categoria_label || '');
+        return hay.toLowerCase().indexOf(q) >= 0;
+      });
+    }
+    function pintarCompras() { renderCompras(comprasFiltradas()); }
+
     function cargarCompras() {
       cerrarEditorCompra();
       var filtros = { medio_pago_id: el.cFiltroTarjeta.value, estado: el.cFiltroEstado.value };
@@ -1080,7 +1143,7 @@
       var hit = cacheGet('compras', key);
       if (hit) {
         compras = hit.data;
-        renderCompras(compras);
+        pintarCompras();
         if (Date.now() - hit.ts < REVALIDAR_MS) return;
       } else {
         el.cResumen.textContent = 'Cargando…';
@@ -1094,7 +1157,7 @@
           }
           compras = res.data.compras || [];
           cacheSet('compras', key, compras);
-          renderCompras(compras);
+          pintarCompras();
         })
         .withFailureHandler(function (err) {
           if (!hit) el.cResumen.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
@@ -1104,6 +1167,16 @@
 
     // ---- Cuotas pendientes (subvista de Crédito, slice 2c) ----
     var credSubActual = 'compras';   // 'compras' | 'pendientes'
+    var pendientesActuales = [];     // última lista traída (para filtrar por texto)
+
+    // Búsqueda por texto en Pendientes (client-side, antes de agrupar).
+    function pintarPendientes() {
+      var q = (el.pBuscar.value || '').trim().toLowerCase();
+      var lista = !q ? pendientesActuales : pendientesActuales.filter(function (c) {
+        return ((c.descripcion || '') + ' ' + (c.tarjeta_label || '')).toLowerCase().indexOf(q) >= 0;
+      });
+      renderPendientes(lista);
+    }
 
     function switchCredSub(sub) {
       credSubActual = sub;
@@ -1190,7 +1263,8 @@
       var key = JSON.stringify(filtros);
       var hit = cacheGet('pendientes', key);
       if (hit) {
-        renderPendientes(hit.data);
+        pendientesActuales = hit.data;
+        pintarPendientes();
         if (Date.now() - hit.ts < REVALIDAR_MS) return;
       } else {
         el.pResumen.textContent = 'Cargando…';
@@ -1202,9 +1276,9 @@
             if (!hit) el.pResumen.textContent = '✗ ' + ((res && res.error) || 'Error al listar.');
             return;
           }
-          var lista = res.data.compras || [];
-          cacheSet('pendientes', key, lista);
-          renderPendientes(lista);
+          pendientesActuales = res.data.compras || [];
+          cacheSet('pendientes', key, pendientesActuales);
+          pintarPendientes();
         })
         .withFailureHandler(function (err) {
           if (!hit) el.pResumen.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
@@ -1563,7 +1637,7 @@
           // lo pintamos; si cambió los filtros, no le pisamos la vista.
           if (viewActual === 'historial' && JSON.stringify(filtrosHistorial()) === key) {
             histActuales = res.data.gastos || [];
-            renderHistorial(histActuales);
+            pintarHistorial();
           }
         })
         .withFailureHandler(function () {})
@@ -1600,6 +1674,7 @@
     el.editCancel.addEventListener('click', function () { enterCreateMode(); showView('form'); });
 
     el.histList.addEventListener('click', onHistClick);
+    el.hBuscar.addEventListener('input', pintarHistorial);
     el.hDesde.addEventListener('change', cargarHistorial);
     el.hHasta.addEventListener('change', cargarHistorial);
     el.hCategoria.addEventListener('change', onFiltroCategoriaChange);
@@ -1618,6 +1693,8 @@
     el.mSave.addEventListener('click', guardarMaestro);
     el.mBuscar.addEventListener('input', renderMaestros);
     el.mEstado.addEventListener('change', renderMaestros);
+    el.mFCategoria.addEventListener('change', function () { rebuildSubcatFiltroMaestros(); renderMaestros(); });
+    el.mFSubcategoria.addEventListener('change', renderMaestros);
     var subBtns = document.querySelectorAll('.subtab');
     for (var s = 0; s < subBtns.length; s++) {
       subBtns[s].addEventListener('click', function () { switchMaster(this.getAttribute('data-master')); });
@@ -1631,7 +1708,9 @@
     el.cSave.addEventListener('click', guardarCompra);
     el.cFiltroTarjeta.addEventListener('change', cargarCompras);
     el.cFiltroEstado.addEventListener('change', cargarCompras);
+    el.cBuscar.addEventListener('input', pintarCompras);
     el.pTarjeta.addEventListener('change', cargarPendientes);
+    el.pBuscar.addEventListener('input', pintarPendientes);
     var credSubBtns = document.querySelectorAll('.subtab[data-credsub]');
     for (var cs = 0; cs < credSubBtns.length; cs++) {
       credSubBtns[cs].addEventListener('click', function () { switchCredSub(this.getAttribute('data-credsub')); });

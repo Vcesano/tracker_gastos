@@ -91,6 +91,12 @@
             <button type="button" id="h-toggle" class="link">▼ Filtros</button>
           </div>
         </div>
+        <div class="filtros-row">
+          <label class="field">
+            <span>Buscar</span>
+            <input type="text" id="h-buscar" placeholder="Filtrar por descripción…">
+          </label>
+        </div>
         <div class="filtros" id="h-filtros" hidden>
           <div class="filtros-row">
             <label class="field">
@@ -207,6 +213,12 @@
 
         <div class="filtros-row">
           <label class="field">
+            <span>Buscar</span>
+            <input type="text" id="c-buscar" placeholder="Filtrar por descripción…">
+          </label>
+        </div>
+        <div class="filtros-row">
+          <label class="field">
             <span>Tarjeta</span>
             <select id="c-filtro-tarjeta"></select>
           </label>
@@ -225,6 +237,12 @@
         </div><!-- /cred-compras -->
 
         <div id="cred-pendientes" hidden>
+          <div class="filtros-row">
+            <label class="field">
+              <span>Buscar</span>
+              <input type="text" id="p-buscar" placeholder="Filtrar por descripción…">
+            </label>
+          </div>
           <div class="filtros-row">
             <label class="field">
               <span>Tarjeta</span>
@@ -315,6 +333,16 @@
           <label class="field">
             <span>Buscar</span>
             <input type="text" id="m-buscar" placeholder="Filtrar por nombre…">
+          </label>
+        </div>
+        <div class="filtros-row">
+          <label class="field" id="m-fc-wrap">
+            <span>Categoría</span>
+            <select id="m-f-categoria"></select>
+          </label>
+          <label class="field" id="m-fs-wrap">
+            <span>Subcategoría</span>
+            <select id="m-f-subcategoria" disabled></select>
           </label>
           <label class="field">
             <span>Estado</span>
