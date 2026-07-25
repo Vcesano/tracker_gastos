@@ -538,6 +538,50 @@
   .toast.ok  { background: #1f6b52; border-color: #2c8a6b; color: #eafff5; }
   .toast.err { background: #7a2f2b; border-color: #a8453d; color: #ffeceb; }
 
+  /* --- Modal de confirmación (propio de la app) --- */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 50;
+  }
+  .modal-backdrop[hidden] { display: none; }
+  .modal {
+    width: 100%;
+    max-width: 420px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    box-shadow: 0 14px 44px rgba(0, 0, 0, 0.55);
+    animation: modal-in 0.14s ease-out;
+  }
+  @keyframes modal-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce) { .modal { animation: none; } }
+  .modal-title { font-size: 1.1rem; font-weight: 700; margin-bottom: 8px; }
+  .modal-msg {
+    color: var(--muted);
+    font-size: 0.95rem;
+    line-height: 1.45;
+    white-space: pre-line;
+    margin-bottom: 20px;
+  }
+  .modal-acciones { display: flex; gap: 12px; }
+  .modal-acciones .btn,
+  .modal-acciones .btn-sec { margin: 0; }
+  /* Botón de acción destructiva (Borrar / Eliminar): rojo. */
+  .btn.danger { background: var(--err); color: #fff; }
+  .btn.danger:hover,
+  .btn.danger:active { background: #c9433c; }
+  .btn.danger:disabled:hover { background: var(--err); }
+
   /* =========================================================
      Desktop (It 3a): hasta acá todo es la vista mobile. A partir
      de 900px la app usa el ancho: contenedor más grande, tipografía

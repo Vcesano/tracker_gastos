@@ -106,7 +106,13 @@
       rReset: $('r-reset'),
       rTotal: $('r-total'),
       rConfirmar: $('r-confirmar'),
-      toast: $('toast')
+      toast: $('toast'),
+      // modal de confirmación
+      modal: $('modal'),
+      modalTitle: $('modal-title'),
+      modalMsg: $('modal-msg'),
+      modalOk: $('modal-ok'),
+      modalCancel: $('modal-cancel')
     };
 
     var maestros = { categorias: [], medios: [] };
@@ -227,6 +233,28 @@
                 '</div><div class="skel-bar w80"></div></div>';
       }
       cont.innerHTML = html;
+    }
+
+    // ---- Modal de confirmación (It 3d) ----
+    // Reemplaza window.confirm, que en el celu se ve como un cartel del
+    // navegador ajeno a la app. Devuelve una promesa que resuelve true/false.
+    var modalResolver = null;
+    function confirmar(opts) {
+      opts = opts || {};
+      el.modalTitle.textContent = opts.titulo || '¿Confirmás?';
+      el.modalMsg.textContent = opts.mensaje || '';
+      el.modalOk.textContent = opts.ok || 'Confirmar';
+      el.modalOk.className = 'btn' + (opts.danger ? ' danger' : '');
+      el.modal.hidden = false;
+      el.modalOk.focus();
+      return new Promise(function (resolve) { modalResolver = resolve; });
+    }
+    function cerrarModal(valor) {
+      if (!modalResolver) return;
+      var r = modalResolver;
+      modalResolver = null;
+      el.modal.hidden = true;
+      r(valor);
     }
 
     var toastTimer = null;
@@ -538,18 +566,24 @@
         return;
       }
       if (idDel) {
-        if (!window.confirm('¿Borrar este gasto? No se puede deshacer.')) return;
-        t.disabled = true;
-        google.script.run
-          .withSuccessHandler(function (res) {
-            if (res && res.ok) { invalidarCache(); toast('✓ Gasto borrado', 'ok'); cargarHistorial(); }
-            else { t.disabled = false; toast('✗ ' + ((res && res.error) || 'No se pudo borrar.'), 'err'); }
-          })
-          .withFailureHandler(function (err) {
-            t.disabled = false;
-            toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err');
-          })
-          .borrarGasto(idDel);
+        confirmar({
+          titulo: 'Borrar gasto',
+          mensaje: '¿Borrar este gasto? No se puede deshacer.',
+          ok: 'Borrar', danger: true
+        }).then(function (ok) {
+          if (!ok) return;
+          t.disabled = true;
+          google.script.run
+            .withSuccessHandler(function (res) {
+              if (res && res.ok) { invalidarCache(); toast('✓ Gasto borrado', 'ok'); cargarHistorial(); }
+              else { t.disabled = false; toast('✗ ' + ((res && res.error) || 'No se pudo borrar.'), 'err'); }
+            })
+            .withFailureHandler(function (err) {
+              t.disabled = false;
+              toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err');
+            })
+            .borrarGasto(idDel);
+        });
       }
     }
 
@@ -691,16 +725,22 @@
 
     function toggleActivoMaestro(item) {
       var esCat = masterActual === 'categorias';
-      var accion = item.activo ? 'desactivar' : 'activar';
-      if (!window.confirm('¿Seguro que querés ' + accion + ' este maestro?')) return;
-      function done(res) {
-        if (res && res.ok) { invalidarCache(); toast('✓ Actualizado', 'ok'); cargarMaestros(); refrescarCatalogos(); }
-        else { toast('✗ ' + ((res && res.error) || 'No se pudo actualizar.'), 'err'); }
-      }
-      function fail(err) { toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err'); }
-      var r = google.script.run.withSuccessHandler(done).withFailureHandler(fail);
-      if (esCat) r.setActivoCategoria(item.id, !item.activo);
-      else r.setActivoMedio(item.id, !item.activo);
+      var accion = item.activo ? 'Desactivar' : 'Activar';
+      confirmar({
+        titulo: accion,
+        mensaje: '¿Seguro que querés ' + accion.toLowerCase() + ' este maestro?',
+        ok: accion   // reversible: sin rojo
+      }).then(function (ok) {
+        if (!ok) return;
+        function done(res) {
+          if (res && res.ok) { invalidarCache(); toast('✓ Actualizado', 'ok'); cargarMaestros(); refrescarCatalogos(); }
+          else { toast('✗ ' + ((res && res.error) || 'No se pudo actualizar.'), 'err'); }
+        }
+        function fail(err) { toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err'); }
+        var r = google.script.run.withSuccessHandler(done).withFailureHandler(fail);
+        if (esCat) r.setActivoCategoria(item.id, !item.activo);
+        else r.setActivoMedio(item.id, !item.activo);
+      });
     }
 
     // Borrado físico: el server solo lo permite si no hay referencias; si las
@@ -708,14 +748,20 @@
     function eliminarMaestro(item) {
       var esCat = masterActual === 'categorias';
       var etiqueta = esCat ? (item.categoria + (item.subcategoria ? ' › ' + item.subcategoria : '')) : item.entidad;
-      if (!window.confirm('¿Eliminar definitivamente "' + etiqueta + '"?\nSolo se puede si ningún gasto o compra lo usa.')) return;
-      function done(res) {
-        if (res && res.ok) { invalidarCache(); toast('✓ Eliminado', 'ok'); cargarMaestros(); refrescarCatalogos(); }
-        else { toast('✗ ' + ((res && res.error) || 'No se pudo eliminar.'), 'err'); }
-      }
-      function fail(err) { toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err'); }
-      var r = google.script.run.withSuccessHandler(done).withFailureHandler(fail);
-      if (esCat) r.borrarCategoria(item.id); else r.borrarMedio(item.id);
+      confirmar({
+        titulo: 'Eliminar definitivamente',
+        mensaje: '¿Eliminar "' + etiqueta + '"?\nSolo se puede si ningún gasto o compra lo usa.',
+        ok: 'Eliminar', danger: true
+      }).then(function (ok) {
+        if (!ok) return;
+        function done(res) {
+          if (res && res.ok) { invalidarCache(); toast('✓ Eliminado', 'ok'); cargarMaestros(); refrescarCatalogos(); }
+          else { toast('✗ ' + ((res && res.error) || 'No se pudo eliminar.'), 'err'); }
+        }
+        function fail(err) { toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err'); }
+        var r = google.script.run.withSuccessHandler(done).withFailureHandler(fail);
+        if (esCat) r.borrarCategoria(item.id); else r.borrarMedio(item.id);
+      });
     }
 
     // Filtra por texto libre y por estado (activos | inactivos | todos).
@@ -942,13 +988,19 @@
     // Borrado físico: el server solo lo permite si no hay cuotas pagadas; si las
     // hay, devuelve un error que lo explica (lo mostramos tal cual).
     function eliminarCompra(compra) {
-      if (!window.confirm('¿Eliminar la compra "' + (compra.descripcion || 'sin descripción') + '"?\nSolo se puede si no tiene cuotas pagadas.')) return;
-      function done(res) {
-        if (res && res.ok) { invalidarCache(); toast('✓ Eliminada', 'ok'); cargarCompras(); }
-        else { toast('✗ ' + ((res && res.error) || 'No se pudo eliminar.'), 'err'); }
-      }
-      function fail(err) { toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err'); }
-      google.script.run.withSuccessHandler(done).withFailureHandler(fail).borrarCompra(compra.id);
+      confirmar({
+        titulo: 'Eliminar compra',
+        mensaje: '¿Eliminar la compra "' + (compra.descripcion || 'sin descripción') + '"?\nSolo se puede si no tiene cuotas pagadas.',
+        ok: 'Eliminar', danger: true
+      }).then(function (ok) {
+        if (!ok) return;
+        function done(res) {
+          if (res && res.ok) { invalidarCache(); toast('✓ Eliminada', 'ok'); cargarCompras(); }
+          else { toast('✗ ' + ((res && res.error) || 'No se pudo eliminar.'), 'err'); }
+        }
+        function fail(err) { toast('✗ Error de conexión: ' + (err && err.message ? err.message : err), 'err'); }
+        google.script.run.withSuccessHandler(done).withFailureHandler(fail).borrarCompra(compra.id);
+      });
     }
 
     function renderCompras(lista) {
@@ -1400,9 +1452,11 @@
           if (res && res.ok && res.data && res.data.requiereConfirmacion) {
             restore();
             var lista = (res.data.duplicados || []).join(', ');
-            if (window.confirm('Ya hay pagos con esa fecha para: ' + lista + '.\n¿Cargar igual (se duplicarían)?')) {
-              enviarResumen(payload, true);
-            }
+            confirmar({
+              titulo: 'Pagos duplicados',
+              mensaje: 'Ya hay pagos con esa fecha para: ' + lista + '.\n¿Cargar igual? Se duplicarían.',
+              ok: 'Cargar igual', danger: true
+            }).then(function (ok) { if (ok) enviarResumen(payload, true); });
             return;
           }
           restore();
@@ -1582,6 +1636,14 @@
     for (var cs = 0; cs < credSubBtns.length; cs++) {
       credSubBtns[cs].addEventListener('click', function () { switchCredSub(this.getAttribute('data-credsub')); });
     }
+
+    el.modalOk.addEventListener('click', function () { cerrarModal(true); });
+    el.modalCancel.addEventListener('click', function () { cerrarModal(false); });
+    // Tocar el fondo (fuera de la tarjeta) o Escape = cancelar.
+    el.modal.addEventListener('click', function (ev) { if (ev.target === el.modal) cerrarModal(false); });
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape' && !el.modal.hidden) cerrarModal(false);
+    });
 
     el.rGenerar.addEventListener('click', generarGrilla);
     el.rReset.addEventListener('click', resetResumen);
