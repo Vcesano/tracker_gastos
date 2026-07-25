@@ -44,6 +44,80 @@ function getCatalogos() {
 }
 
 /**
+ * Sugerencias para acelerar la carga de un gasto directo (It 3e), derivadas de
+ * los propios `Gastos` (sin persistir preferencias):
+ *  - `ultimo`: {categoria_id, medio_pago_id} del gasto directo más reciente,
+ *    para prellenar el form.
+ *  - `recientes`: hasta 4 combos (categoría+medio) más usados en los últimos
+ *    30 días, para ofrecer como chips de un toque.
+ *
+ * Solo mira gastos DIRECTOS (sin compra_credito_id) cuya categoría y medio
+ * siguen activos y el medio no es Credito — así toda sugerencia es cargable
+ * desde el form tal cual.
+ */
+function getSugerencias() {
+  try {
+    var medioTipo = {}, medioLabel = {};
+    leerTabla_('MediosPago').forEach(function (m) {
+      medioLabel[String(m.id)] = String(m.entidad || '');
+      if (esActivo_(m.activo)) medioTipo[String(m.id)] = String(m.tipo_medio || '');
+    });
+    var catActiva = {}, catLabel = {};
+    leerTabla_('Categorias').forEach(function (c) {
+      var id = String(c.id);
+      if (!esActivo_(c.activo)) return;
+      catActiva[id] = true;
+      var sub = String(c.subcategoria || '').trim();
+      catLabel[id] = String(c.categoria || '') + (sub ? ' › ' + sub : '');
+    });
+
+    var directos = leerTabla_('Gastos').filter(function (g) {
+      if (String(g.compra_credito_id || '').trim()) return false;
+      var cid = String(g.categoria_id || ''), mid = String(g.medio_pago_id || '');
+      return catActiva[cid] && medioTipo[mid] && medioTipo[mid] !== 'Credito';
+    }).map(function (g) {
+      return {
+        categoria_id: String(g.categoria_id || ''),
+        medio_pago_id: String(g.medio_pago_id || ''),
+        fecha: fechaISO_(g.fecha),
+        creado: String(g.creado_en || '')
+      };
+    });
+
+    // Último usado: el directo más reciente (por fecha, desempate creado_en).
+    directos.sort(function (a, b) {
+      if (a.fecha !== b.fecha) return a.fecha < b.fecha ? 1 : -1;
+      return a.creado < b.creado ? 1 : a.creado > b.creado ? -1 : 0;
+    });
+    var ultimo = directos.length
+      ? { categoria_id: directos[0].categoria_id, medio_pago_id: directos[0].medio_pago_id }
+      : null;
+
+    // Recientes: combos más usados en los últimos 30 días.
+    var d = new Date(); d.setDate(d.getDate() - 30);
+    var limite = Utilities.formatDate(d, 'America/Argentina/Tucuman', 'yyyy-MM-dd');
+    var conteo = {};
+    directos.forEach(function (g) {
+      if (g.fecha < limite) return;
+      var k = g.categoria_id + '|' + g.medio_pago_id;
+      conteo[k] = (conteo[k] || 0) + 1;
+    });
+    var recientes = Object.keys(conteo).map(function (k) {
+      var p = k.split('|');
+      return {
+        categoria_id: p[0], medio_pago_id: p[1],
+        categoria_label: catLabel[p[0]] || '', medio_label: medioLabel[p[1]] || '',
+        n: conteo[k]
+      };
+    }).sort(function (a, b) { return b.n - a.n; }).slice(0, 4);
+
+    return { ok: true, data: { ultimo: ultimo, recientes: recientes } };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
  * Valida y normaliza el payload común a alta/edición de un gasto. Devuelve
  * { ok:true, data:{ campos normalizados } } o { ok:false, error }. No escribe.
  */
@@ -161,10 +235,17 @@ function listarGastos(filtros) {
     var medLabel = {};
     leerTabla_('MediosPago').forEach(function (m) { medLabel[String(m.id)] = String(m.entidad || ''); });
 
-    // Tarjeta de cada compra a crédito, para derivar la tarjeta real de una cuota
-    // (el medio_pago_id de la cuota es la CUENTA que paga el resumen, no la tarjeta).
-    var compraCard = {};
-    leerTabla_('ComprasCredito').forEach(function (c) { compraCard[String(c.id)] = String(c.medio_pago_id || ''); });
+    // Info de cada compra a crédito, para derivar la tarjeta real de una cuota
+    // (el medio_pago_id de la cuota es la CUENTA que paga el resumen, no la
+    // tarjeta) y para el editor de cuota del Historial (It 3e).
+    var compraInfo = {};
+    leerTabla_('ComprasCredito').forEach(function (c) {
+      compraInfo[String(c.id)] = {
+        medio: String(c.medio_pago_id || ''),
+        descripcion: String(c.descripcion || ''),
+        n_cuotas: Number(c.n_cuotas) || 0
+      };
+    });
 
     var gastos = leerTabla_('Gastos').map(function (g) {
       var cid = String(g.categoria_id || ''), mid = String(g.medio_pago_id || '');
@@ -172,7 +253,8 @@ function listarGastos(filtros) {
       var nro = g.nro_cuota === '' || g.nro_cuota === null ? '' : (Number(g.nro_cuota) || '');
       var compraId = String(g.compra_credito_id || '').trim();
       var esCuota = compraId !== '';
-      var tarjetaId = esCuota ? (compraCard[compraId] || '') : '';
+      var cinfo = esCuota ? (compraInfo[compraId] || null) : null;
+      var tarjetaId = cinfo ? cinfo.medio : '';
       return {
         id: String(g.id),
         fecha: fechaISO_(g.fecha),
@@ -187,6 +269,9 @@ function listarGastos(filtros) {
         moneda: String(g.moneda || ''),
         es_cuota: esCuota,
         nro_cuota: nro,
+        compra_credito_id: compraId,
+        compra_label: cinfo ? cinfo.descripcion : '',
+        compra_ncuotas: cinfo ? cinfo.n_cuotas : 0,
         tarjeta_id: tarjetaId,
         tarjeta_label: tarjetaId ? (medLabel[tarjetaId] || tarjetaId) : ''
       };
@@ -212,7 +297,11 @@ function listarGastos(filtros) {
 
 /**
  * Edita un gasto existente. Solo toca los 6 campos editables; conserva id,
- * creado_en y el vínculo de cuota (compra_credito_id, nro_cuota) intactos.
+ * creado_en y el vínculo a la compra (compra_credito_id) intacto.
+ *
+ * `nro_cuota` (It 3e): editable SOLO si el gasto es realmente una cuota
+ * (tiene compra_credito_id). Se valida entero entre 1 y la cantidad de cuotas
+ * de la compra. Si el gasto no es cuota, se ignora (no se puede inventar una).
  */
 function actualizarGasto(id, payload) {
   try {
@@ -222,14 +311,30 @@ function actualizarGasto(id, payload) {
     var v = validarGastoPayload_(payload);
     if (!v.ok) return v;
 
-    var ok = actualizarFila_('Gastos', id, {
+    var cambios = {
       fecha: v.data.fecha,
       descripcion: v.data.descripcion,
       categoria_id: v.data.categoria_id,
       medio_pago_id: v.data.medio_pago_id,
       monto: v.data.monto,
       moneda: v.data.moneda
-    });
+    };
+
+    var pedidoNro = payload && payload.nro_cuota !== undefined && payload.nro_cuota !== null && String(payload.nro_cuota).trim() !== '';
+    if (pedidoNro) {
+      var gasto = leerTabla_('Gastos').filter(function (g) { return String(g.id) === id; })[0];
+      if (!gasto) return { ok: false, error: 'No se encontró el gasto (¿ya fue borrado?).' };
+      var compraId = String(gasto.compra_credito_id || '').trim();
+      if (!compraId) return { ok: false, error: 'Este gasto no es una cuota: no tiene número de cuota.' };
+      var nro = Number(payload.nro_cuota);
+      if (!Number.isInteger(nro) || nro < 1) return { ok: false, error: 'El número de cuota debe ser un entero mayor o igual a 1.' };
+      var compra = leerTabla_('ComprasCredito').filter(function (c) { return String(c.id) === compraId; })[0];
+      var maxN = compra ? (Number(compra.n_cuotas) || 0) : 0;
+      if (maxN && nro > maxN) return { ok: false, error: 'La compra tiene ' + maxN + ' cuotas: el número no puede ser mayor.' };
+      cambios.nro_cuota = nro;
+    }
+
+    var ok = actualizarFila_('Gastos', id, cambios);
     if (!ok) return { ok: false, error: 'No se encontró el gasto (¿ya fue borrado?).' };
     return { ok: true, data: { id: id } };
   } catch (e) {
