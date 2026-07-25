@@ -436,16 +436,13 @@
     margin-bottom: 4px;
   }
   .pgroup-tarjeta,
-  .hgroup-fecha { font-weight: 700; }
-  .pgroup-tarjeta { font-size: 0.98rem; }
-  .hgroup-fecha { font-size: 1.08rem; text-transform: capitalize; }
+  .hgroup-fecha { font-size: 1.08rem; font-weight: 700; }
+  .hgroup-fecha { text-transform: capitalize; }
   .pgroup-total,
-  .hgroup-total { color: var(--muted); text-align: right; white-space: nowrap; }
-  .pgroup-total { font-size: 0.85rem; }
-  .pgroup-total strong { color: var(--text); font-weight: 600; }
-  /* El total del día manda: mayor que el monto de cada gasto (1rem) para que
-     la vista se lea primero por día y después por detalle. */
-  .hgroup-total { font-size: 0.95rem; }
+  .hgroup-total { font-size: 0.95rem; color: var(--muted); text-align: right; white-space: nowrap; }
+  /* El total del grupo manda: mayor que el monto de cada renglón (1rem) para
+     que la vista se lea primero por grupo y después por detalle. */
+  .pgroup-total strong,
   .hgroup-total strong { color: var(--text); font-weight: 700; font-size: 1.2rem; }
 
   /* --- Subtabs (Maestros) --- */
@@ -642,7 +639,8 @@
     .rrow-head,
     .rrow-ref { grid-column: 1 / -1; }
 
-    .pgroup-tarjeta { font-size: 1.05rem; }
+    .pgroup-tarjeta,
+    .hgroup-fecha { font-size: 1.15rem; }
     .toast { font-size: 1rem; }
   }
 </style>
