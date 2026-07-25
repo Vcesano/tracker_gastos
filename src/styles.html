@@ -253,6 +253,11 @@
   }
   .link:hover { color: var(--accent-press); }
   .link:disabled { opacity: 0.55; cursor: default; }
+  /* Botón de filtros: en negrita cuando hay filtros puestos y el panel cerrado. */
+  .link.has-filtros { font-weight: 700; }
+
+  /* Pie del panel de filtros: "Limpiar filtros" alineado a la derecha. */
+  .filtros-foot { display: flex; justify-content: flex-end; margin-top: 2px; }
 
   /* --- Banner de edición --- */
   .edit-banner {
@@ -416,9 +421,11 @@
     padding: 4px;
   }
 
-  /* --- Grupos de cuotas pendientes por tarjeta --- */
-  .pgroup { margin-bottom: 18px; }
-  .pgroup-head {
+  /* --- Grupos: cuotas pendientes por tarjeta / historial por día --- */
+  .pgroup,
+  .hgroup { margin-bottom: 18px; }
+  .pgroup-head,
+  .hgroup-head {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
@@ -427,9 +434,13 @@
     border-bottom: 2px solid var(--accent);
     margin-bottom: 4px;
   }
-  .pgroup-tarjeta { font-size: 0.98rem; font-weight: 700; }
-  .pgroup-total { font-size: 0.85rem; color: var(--muted); text-align: right; white-space: nowrap; }
-  .pgroup-total strong { color: var(--text); font-weight: 600; }
+  .pgroup-tarjeta,
+  .hgroup-fecha { font-size: 0.98rem; font-weight: 700; }
+  .hgroup-fecha { text-transform: capitalize; }
+  .pgroup-total,
+  .hgroup-total { font-size: 0.85rem; color: var(--muted); text-align: right; white-space: nowrap; }
+  .pgroup-total strong,
+  .hgroup-total strong { color: var(--text); font-weight: 600; }
 
   /* --- Subtabs (Maestros) --- */
   .subtabs {

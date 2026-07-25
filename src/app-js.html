@@ -44,6 +44,8 @@
       hCuotas: $('h-cuotas'),
       hTarjeta: $('h-tarjeta'),
       hLimpiar: $('h-limpiar'),
+      hToggle: $('h-toggle'),
+      hFiltros: $('h-filtros'),
       histResumen: $('hist-resumen'),
       histList: $('hist-list'),
       // maestros
@@ -123,6 +125,16 @@
     function fmtFecha(iso) {
       var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso));
       return m ? m[3] + '/' + m[2] + '/' + m[1] : String(iso);
+    }
+
+    // ISO → "vie 25/07/2026" (encabezado de grupo por día en el historial).
+    // Se arma la fecha con componentes locales para no correrse de día por UTC.
+    var DIAS_SEM = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+    function fmtFechaLarga(iso) {
+      var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso));
+      if (!m) return String(iso);
+      var d = new Date(+m[1], +m[2] - 1, +m[3]);
+      return DIAS_SEM[d.getDay()] + ' ' + m[3] + '/' + m[2] + '/' + m[1];
     }
 
     function distinct(arr) {
@@ -381,7 +393,25 @@
       };
     }
 
+    // Cuántos filtros están puestos, para avisar en el botón que hay filtros
+    // activos aunque el panel esté cerrado.
+    function contarFiltrosActivos() {
+      var f = filtrosHistorial(), n = 0, k;
+      for (k in f) if (f[k]) n++;
+      return n;
+    }
+
+    // El panel de filtros arranca colapsado (son 7 filtros y estorban en el
+    // celu). El botón muestra si están abiertos y cuántos hay puestos.
+    function actualizarBotonFiltros() {
+      var n = contarFiltrosActivos();
+      var abierto = !el.hFiltros.hidden;
+      el.hToggle.textContent = (abierto ? '▲ Filtros' : '▼ Filtros') + (n ? ' (' + n + ')' : '');
+      el.hToggle.classList.toggle('has-filtros', n > 0);
+    }
+
     function cargarHistorial() {
+      actualizarBotonFiltros();
       var filtros = filtrosHistorial();
       var key = JSON.stringify(filtros);
       var hit = cacheGet('historial', key);
@@ -410,55 +440,88 @@
         .listarGastos(filtros);
     }
 
+    // Una fila de gasto. La fecha ya no va acá: ahora encabeza el grupo del día.
+    function filaGasto(g) {
+      var row = document.createElement('div');
+      row.className = 'gasto';
+
+      var main = document.createElement('div');
+      main.className = 'gasto-main';
+
+      var desc = document.createElement('p');
+      desc.className = 'gasto-desc';
+      desc.textContent = g.descripcion || '(sin descripción)';
+      if (g.es_cuota) {
+        var badge = document.createElement('span');
+        badge.className = 'badge';
+        badge.textContent = g.nro_cuota ? 'cuota ' + g.nro_cuota : 'cuota';
+        desc.appendChild(badge);
+      }
+
+      var meta = document.createElement('div');
+      meta.className = 'gasto-meta';
+      var metaTxt = g.categoria_label + ' · ' + g.medio_label;
+      if (g.es_cuota && g.tarjeta_label) metaTxt += ' · 💳 ' + g.tarjeta_label;
+      meta.textContent = metaTxt;
+
+      var acc = document.createElement('div');
+      acc.className = 'gasto-acciones';
+      var bEd = document.createElement('button');
+      bEd.className = 'icon-btn'; bEd.type = 'button'; bEd.textContent = '✎ Editar';
+      bEd.setAttribute('data-edit', g.id);
+      var bDel = document.createElement('button');
+      bDel.className = 'icon-btn danger'; bDel.type = 'button'; bDel.textContent = '🗑 Borrar';
+      bDel.setAttribute('data-del', g.id);
+      acc.appendChild(bEd); acc.appendChild(bDel);
+
+      main.appendChild(desc); main.appendChild(meta); main.appendChild(acc);
+
+      var side = document.createElement('div');
+      side.className = 'gasto-side';
+      var monto = document.createElement('span');
+      monto.className = 'gasto-monto';
+      monto.textContent = fmtMoneda(g.monto, g.moneda);
+      side.appendChild(monto);
+
+      row.appendChild(main); row.appendChild(side);
+      return row;
+    }
+
     function renderHistorial(gastos) {
       el.histResumen.textContent = gastos.length + (gastos.length === 1 ? ' gasto' : ' gastos');
       if (!gastos.length) { el.histList.innerHTML = '<p class="muted">No hay gastos con esos filtros.</p>'; return; }
 
-      var frag = document.createDocumentFragment();
+      // Agrupar por día (los gastos ya vienen desc por fecha del server). Total
+      // del día por moneda; nunca se suman monedas distintas.
+      var groups = {}, order = [];
       gastos.forEach(function (g) {
-        var row = document.createElement('div');
-        row.className = 'gasto';
+        var k = String(g.fecha).slice(0, 10);
+        if (!groups[k]) { groups[k] = { fecha: k, items: [], totales: {} }; order.push(k); }
+        groups[k].items.push(g);
+        groups[k].totales[g.moneda] = (groups[k].totales[g.moneda] || 0) + g.monto;
+      });
 
-        var main = document.createElement('div');
-        main.className = 'gasto-main';
+      var frag = document.createDocumentFragment();
+      order.forEach(function (k) {
+        var grp = groups[k];
+        var box = document.createElement('div');
+        box.className = 'hgroup';
 
-        var desc = document.createElement('p');
-        desc.className = 'gasto-desc';
-        desc.textContent = g.descripcion || '(sin descripción)';
-        if (g.es_cuota) {
-          var badge = document.createElement('span');
-          badge.className = 'badge';
-          badge.textContent = g.nro_cuota ? 'cuota ' + g.nro_cuota : 'cuota';
-          desc.appendChild(badge);
-        }
+        var head = document.createElement('div');
+        head.className = 'hgroup-head';
+        var fecha = document.createElement('span');
+        fecha.className = 'hgroup-fecha';
+        fecha.textContent = fmtFechaLarga(grp.fecha);
+        var tot = document.createElement('span');
+        tot.className = 'hgroup-total';
+        tot.innerHTML = Object.keys(grp.totales).map(function (m) {
+          return '<strong>' + fmtMoneda(grp.totales[m], m) + '</strong>';
+        }).join(' · ');
+        head.appendChild(fecha); head.appendChild(tot);
+        box.appendChild(head);
 
-        var meta = document.createElement('div');
-        meta.className = 'gasto-meta';
-        var metaTxt = fmtFecha(g.fecha) + ' · ' + g.categoria_label + ' · ' + g.medio_label;
-        if (g.es_cuota && g.tarjeta_label) metaTxt += ' · 💳 ' + g.tarjeta_label;
-        meta.textContent = metaTxt;
-
-        var acc = document.createElement('div');
-        acc.className = 'gasto-acciones';
-        var bEd = document.createElement('button');
-        bEd.className = 'icon-btn'; bEd.type = 'button'; bEd.textContent = '✎ Editar';
-        bEd.setAttribute('data-edit', g.id);
-        var bDel = document.createElement('button');
-        bDel.className = 'icon-btn danger'; bDel.type = 'button'; bDel.textContent = '🗑 Borrar';
-        bDel.setAttribute('data-del', g.id);
-        acc.appendChild(bEd); acc.appendChild(bDel);
-
-        main.appendChild(desc); main.appendChild(meta); main.appendChild(acc);
-
-        var side = document.createElement('div');
-        side.className = 'gasto-side';
-        var monto = document.createElement('span');
-        monto.className = 'gasto-monto';
-        monto.textContent = fmtMoneda(g.monto, g.moneda);
-        side.appendChild(monto);
-
-        row.appendChild(main); row.appendChild(side);
-        frag.appendChild(row);
+        grp.items.forEach(function (g) { box.appendChild(filaGasto(g)); });
+        frag.appendChild(box);
       });
       el.histList.innerHTML = '';
       el.histList.appendChild(frag);
@@ -1490,6 +1553,10 @@
     el.hCuotas.addEventListener('change', cargarHistorial);
     el.hTarjeta.addEventListener('change', cargarHistorial);
     el.hLimpiar.addEventListener('click', limpiarFiltros);
+    el.hToggle.addEventListener('click', function () {
+      el.hFiltros.hidden = !el.hFiltros.hidden;
+      actualizarBotonFiltros();
+    });
 
     el.mNuevo.addEventListener('click', function () { abrirEditor(null); });
     el.mCancel.addEventListener('click', cerrarEditor);

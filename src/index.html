@@ -86,9 +86,9 @@
       <section class="card view" id="historial-card" data-view="historial" hidden>
         <div class="hist-head">
           <h2 class="card-title">Historial</h2>
-          <button type="button" id="h-limpiar" class="link">Limpiar filtros</button>
+          <button type="button" id="h-toggle" class="link">▼ Filtros</button>
         </div>
-        <div class="filtros">
+        <div class="filtros" id="h-filtros" hidden>
           <div class="filtros-row">
             <label class="field">
               <span>Desde</span>
@@ -126,6 +126,9 @@
               <span>Tarjeta</span>
               <select id="h-tarjeta"></select>
             </label>
+          </div>
+          <div class="filtros-foot">
+            <button type="button" id="h-limpiar" class="link">Limpiar filtros</button>
           </div>
         </div>
         <p class="muted" id="hist-resumen"></p>
