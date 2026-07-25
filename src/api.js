@@ -145,7 +145,13 @@ function listarGastos(filtros) {
     filtros = filtros || {};
     var desde = String(filtros.desde || '').trim();
     var hasta = String(filtros.hasta || '').trim();
-    var catF = String(filtros.categoria || '').trim();
+    // El filtro de categoría llega como "Tipo|Categoria" (It 4a): antes viajaba
+    // solo el nombre y `Diario › Comida` y `Mensual › Comida` se mezclaban.
+    // Se acepta también el nombre pelado por compatibilidad (tipoF queda vacío).
+    var catRaw = String(filtros.categoria || '').trim();
+    var catParts = catRaw.split('|');
+    var tipoF = catParts.length > 1 ? catParts[0].trim() : '';
+    var catF = catParts.length > 1 ? catParts.slice(1).join('|').trim() : catRaw;
     var subF = String(filtros.subcategoria || '').trim();
     var medF = String(filtros.medio_pago_id || '').trim();
     var cuotasF = String(filtros.cuotas || '').trim();      // ''|'solo'|'sin'
@@ -156,7 +162,12 @@ function listarGastos(filtros) {
     leerTabla_('Categorias').forEach(function (c) {
       var sub = String(c.subcategoria || '').trim();
       var cat = String(c.categoria || '');
-      catInfo[String(c.id)] = { categoria: cat, subcategoria: sub, label: cat + (sub ? ' › ' + sub : '') };
+      catInfo[String(c.id)] = {
+        tipo: String(c.tipo || ''),
+        categoria: cat,
+        subcategoria: sub,
+        label: cat + (sub ? ' › ' + sub : '')
+      };
     });
     var medLabel = {};
     leerTabla_('MediosPago').forEach(function (m) { medLabel[String(m.id)] = String(m.entidad || ''); });
@@ -175,7 +186,7 @@ function listarGastos(filtros) {
 
     var gastos = leerTabla_('Gastos').map(function (g) {
       var cid = String(g.categoria_id || ''), mid = String(g.medio_pago_id || '');
-      var info = catInfo[cid] || { categoria: '', subcategoria: '', label: cid };
+      var info = catInfo[cid] || { tipo: '', categoria: '', subcategoria: '', label: cid };
       var nro = g.nro_cuota === '' || g.nro_cuota === null ? '' : (Number(g.nro_cuota) || '');
       var compraId = String(g.compra_credito_id || '').trim();
       var esCuota = compraId !== '';
@@ -186,6 +197,7 @@ function listarGastos(filtros) {
         fecha: fechaISO_(g.fecha),
         descripcion: String(g.descripcion || ''),
         categoria_id: cid,
+        tipo: info.tipo,
         categoria: info.categoria,
         subcategoria: info.subcategoria,
         categoria_label: info.label,
@@ -205,6 +217,7 @@ function listarGastos(filtros) {
       if (desde && g.fecha < desde) return false;   // ISO yyyy-mm-dd ordena cronológicamente
       if (hasta && g.fecha > hasta) return false;
       if (catF && g.categoria !== catF) return false;
+      if (tipoF && g.tipo !== tipoF) return false;
       if (subF && g.subcategoria !== subF) return false;
       if (medF && g.medio_pago_id !== medF) return false;
       if (cuotasF === 'solo' && !g.es_cuota) return false;

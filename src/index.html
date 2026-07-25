@@ -388,7 +388,8 @@
         <p id="loading-status">Cargando catálogos…</p>
       </section>
 
-      <div id="toast" class="toast" hidden></div>
+      <!-- role=status: el lector de pantalla anuncia el resultado de la acción -->
+      <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
       <!-- Modal de confirmación propio (reemplaza window.confirm del navegador) -->
       <div id="modal" class="modal-backdrop" hidden>

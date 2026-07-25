@@ -585,6 +585,8 @@
     z-index: 50;
   }
   .modal-backdrop[hidden] { display: none; }
+  /* Con el modal abierto el fondo no scrollea (It 4a). */
+  body.modal-abierto { overflow: hidden; }
   .modal {
     width: 100%;
     max-width: 420px;

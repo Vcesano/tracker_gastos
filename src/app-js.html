@@ -244,6 +244,42 @@
 
     function invalidarCache() { cacheVistas = {}; }
 
+    // ---- Peticiones por zona: orden y deduplicación (It 4a) ----
+    // google.script.run no garantiza que las respuestas lleguen en el orden en
+    // que se pidieron: cambiar dos filtros rápido podía pintar el resultado del
+    // filtro viejo si llegaba último. Cada pedido se lleva un token; si al
+    // volver ya hay uno más nuevo, se descarta. Además, si ya viaja una petición
+    // idéntica (misma zona + misma clave de filtros) no se dispara otra: eso
+    // evitaba el pedido doble de precarga + entrada al Historial.
+    var reqSeq = {};       // zona -> nro del último pedido disparado
+    var reqEnVuelo = {};   // zona -> clave del pedido en vuelo
+
+    // Devuelve el token del pedido, o 0 si ya hay uno idéntico viajando.
+    function pedirZona(zona, key) {
+      if (reqEnVuelo[zona] === key) return 0;
+      reqEnVuelo[zona] = key;
+      reqSeq[zona] = (reqSeq[zona] || 0) + 1;
+      return reqSeq[zona];
+    }
+
+    // true si esta respuesta sigue siendo la vigente (nadie pidió algo más nuevo).
+    function respuestaVigente(zona, token) {
+      if (token !== reqSeq[zona]) return false;   // llegó tarde: la ignoramos
+      reqEnVuelo[zona] = null;
+      return true;
+    }
+
+    // Retrasa la ejecución hasta que dejen de llegar eventos: la búsqueda por
+    // texto re-renderizaba todo el DOM en cada tecla.
+    function debounce(fn, ms) {
+      var t = null;
+      return function () {
+        var args = arguments, self = this;
+        if (t) clearTimeout(t);
+        t = setTimeout(function () { t = null; fn.apply(self, args); }, ms);
+      };
+    }
+
     // Silueta de lista mientras se espera al server (solo la primera vez que
     // se abre una vista; con cache no llega a verse).
     function skeleton(cont, filas) {
@@ -260,21 +296,31 @@
     // Reemplaza window.confirm, que en el celu se ve como un cartel del
     // navegador ajeno a la app. Devuelve una promesa que resuelve true/false.
     var modalResolver = null;
+    var modalFocoPrevio = null;   // a dónde devolver el foco al cerrar (It 4a)
+
     function confirmar(opts) {
       opts = opts || {};
       el.modalTitle.textContent = opts.titulo || '¿Confirmás?';
       el.modalMsg.textContent = opts.mensaje || '';
       el.modalOk.textContent = opts.ok || 'Confirmar';
       el.modalOk.className = 'btn' + (opts.danger ? ' danger' : (opts.warn ? ' warn' : ''));
+      modalFocoPrevio = document.activeElement;
       el.modal.hidden = false;
+      document.body.classList.add('modal-abierto');   // el fondo no scrollea
       el.modalOk.focus();
       return new Promise(function (resolve) { modalResolver = resolve; });
     }
+
     function cerrarModal(valor) {
       if (!modalResolver) return;
       var r = modalResolver;
       modalResolver = null;
       el.modal.hidden = true;
+      document.body.classList.remove('modal-abierto');
+      // Devolver el foco a quien abrió el modal; si esa fila ya no existe
+      // (se re-renderizó la lista), no pasa nada.
+      if (modalFocoPrevio && modalFocoPrevio.focus) { try { modalFocoPrevio.focus(); } catch (e) {} }
+      modalFocoPrevio = null;
       r(valor);
     }
 
@@ -435,13 +481,18 @@
 
     // ---- Historial ----
     function onFiltroCategoriaChange() {
-      var cat = el.hCategoria.value;
+      // El value del filtro es "Tipo|Categoria" (It 4a).
+      var v = el.hCategoria.value;
+      var corte = v.indexOf('|');
+      var tipo = corte >= 0 ? v.slice(0, corte) : '';
+      var cat = corte >= 0 ? v.slice(corte + 1) : v;
       var subs = distinct(
-        categorias.filter(function (c) { return c.categoria === cat && c.subcategoria; })
-                  .map(function (c) { return c.subcategoria; })
+        categorias.filter(function (c) {
+          return c.categoria === cat && (!tipo || c.tipo === tipo) && c.subcategoria;
+        }).map(function (c) { return c.subcategoria; })
       ).map(function (s) { return { value: s, label: s }; });
       fillFiltro(el.hSubcategoria, subs, 'Todas', true);
-      el.hSubcategoria.disabled = !cat;
+      el.hSubcategoria.disabled = !v;
       cargarHistorial();
     }
 
@@ -516,8 +567,11 @@
         el.histResumen.textContent = 'Cargando…';
         skeleton(el.histList, 6);
       }
+      var token = pedirZona('historial', key);
+      if (!token) return;   // ya viaja un pedido idéntico
       google.script.run
         .withSuccessHandler(function (res) {
+          if (!respuestaVigente('historial', token)) return;
           if (!res || !res.ok) {
             if (!hit) el.histResumen.textContent = '✗ ' + ((res && res.error) || 'Error al listar.');
             return;
@@ -527,6 +581,7 @@
           pintarHistorial();
         })
         .withFailureHandler(function (err) {
+          if (!respuestaVigente('historial', token)) return;
           // Si ya había algo pintado desde el cache, no lo tapamos con el error.
           if (!hit) el.histResumen.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
         })
@@ -969,8 +1024,11 @@
         el.mResumen.textContent = 'Cargando…';
         skeleton(el.mList, 6);
       }
+      var token = pedirZona('maestros', 'x');
+      if (!token) return;
       google.script.run
         .withSuccessHandler(function (res) {
+          if (!respuestaVigente('maestros', token)) return;
           if (!res || !res.ok) {
             if (!hit) el.mResumen.textContent = '✗ ' + ((res && res.error) || 'Error al cargar.');
             return;
@@ -983,6 +1041,7 @@
           renderMaestros();
         })
         .withFailureHandler(function (err) {
+          if (!respuestaVigente('maestros', token)) return;
           if (!hit) el.mResumen.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
         })
         .getMaestros();
@@ -990,7 +1049,9 @@
 
     function switchMaster(m) {
       masterActual = m;
-      var subs = document.querySelectorAll('.subtab');
+      // Solo los subtabs de Maestros: si no, esto le sacaba el `active` a los
+      // de Crédito cada vez que se entraba acá (It 4a).
+      var subs = document.querySelectorAll('.subtab[data-master]');
       for (var i = 0; i < subs.length; i++) subs[i].classList.toggle('active', subs[i].getAttribute('data-master') === m);
       // Los filtros de categoría/subcategoría solo aplican a Categorías.
       var esCat = m === 'categorias';
@@ -1225,8 +1286,11 @@
         el.cResumen.textContent = 'Cargando…';
         skeleton(el.cList, 4);
       }
+      var token = pedirZona('compras', key);
+      if (!token) return;
       google.script.run
         .withSuccessHandler(function (res) {
+          if (!respuestaVigente('compras', token)) return;
           if (!res || !res.ok) {
             if (!hit) el.cResumen.textContent = '✗ ' + ((res && res.error) || 'Error al listar.');
             return;
@@ -1236,6 +1300,7 @@
           pintarCompras();
         })
         .withFailureHandler(function (err) {
+          if (!respuestaVigente('compras', token)) return;
           if (!hit) el.cResumen.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
         })
         .listarCompras(filtros);
@@ -1356,8 +1421,11 @@
         el.pResumen.textContent = 'Cargando…';
         skeleton(el.pList, 4);
       }
+      var token = pedirZona('pendientes', key);
+      if (!token) return;
       google.script.run
         .withSuccessHandler(function (res) {
+          if (!respuestaVigente('pendientes', token)) return;
           if (!res || !res.ok) {
             if (!hit) el.pResumen.textContent = '✗ ' + ((res && res.error) || 'Error al listar.');
             return;
@@ -1367,6 +1435,7 @@
           pintarPendientes();
         })
         .withFailureHandler(function (err) {
+          if (!respuestaVigente('pendientes', token)) return;
           if (!hit) el.pResumen.textContent = '✗ Error de conexión: ' + (err && err.message ? err.message : err);
         })
         .listarCompras(filtros);
@@ -1655,8 +1724,22 @@
         medios.map(function (m) { return m.tipo_medio; }).filter(function (t) { return t !== 'Credito'; })
       ).map(function (t) { return { value: t, label: t }; });
 
-      var catFiltro = distinct(categorias.map(function (c) { return c.categoria; }))
-        .map(function (cat) { return { value: cat, label: cat }; });
+      // El value lleva Tipo + Categoría (It 4a): con solo el nombre, dos
+      // categorías homónimas en distinto Tipo (Diario › Comida y Mensual ›
+      // Comida) se filtraban juntas. La etiqueta solo aclara el Tipo cuando el
+      // nombre está repetido, para no ensuciar el desplegable.
+      var paresCat = distinct(categorias.map(function (c) { return c.tipo + '|' + c.categoria; }));
+      var vecesCat = {};
+      paresCat.forEach(function (k) {
+        var cat = k.slice(k.indexOf('|') + 1);
+        vecesCat[cat] = (vecesCat[cat] || 0) + 1;
+      });
+      var catFiltro = paresCat
+        .map(function (k) {
+          var tipo = k.slice(0, k.indexOf('|')), cat = k.slice(k.indexOf('|') + 1);
+          return { value: k, label: vecesCat[cat] > 1 ? tipo + ' › ' + cat : cat };
+        })
+        .sort(function (a, b) { return a.label.localeCompare(b.label, 'es'); });
       fillFiltro(el.hCategoria, catFiltro, 'Todas', true);
       // Medios sin crédito: no se usan para pagar gastos.
       var medFiltro = medios.filter(function (m) { return m.tipo_medio !== 'Credito'; })
@@ -1716,23 +1799,11 @@
 
     // El historial es la vista a la que más se entra: la traemos en segundo
     // plano apenas arranca la app, así el primer clic ya la encuentra cacheada.
+    // Es literalmente cargarHistorial(): el contenedor todavía está oculto, y
+    // desde It 4a el guard de pedidos en vuelo evita que entrar al Historial
+    // mientras esto viaja dispare una segunda llamada idéntica.
     function precargarHistorial() {
-      var filtros = filtrosHistorial();
-      var key = JSON.stringify(filtros);
-      if (cacheGet('historial', key)) return;
-      google.script.run
-        .withSuccessHandler(function (res) {
-          if (!res || !res.ok) return;
-          cacheSet('historial', key, res.data.gastos || []);
-          // Si mientras tanto entró al Historial con estos mismos filtros,
-          // lo pintamos; si cambió los filtros, no le pisamos la vista.
-          if (viewActual === 'historial' && JSON.stringify(filtrosHistorial()) === key) {
-            histActuales = res.data.gastos || [];
-            pintarHistorial();
-          }
-        })
-        .withFailureHandler(function () {})
-        .listarGastos(filtros);
+      cargarHistorial();
     }
 
     function cargarCatalogos() {
@@ -1770,7 +1841,9 @@
     el.editCancel.addEventListener('click', function () { enterCreateMode(); showView('form'); });
 
     el.histList.addEventListener('click', onHistClick);
-    el.hBuscar.addEventListener('input', pintarHistorial);
+    // Las búsquedas por texto van con debounce: sin él se re-armaba todo el DOM
+    // de la lista en cada tecla (It 4a).
+    el.hBuscar.addEventListener('input', debounce(pintarHistorial, 150));
     el.hDesde.addEventListener('change', cargarHistorial);
     el.hHasta.addEventListener('change', cargarHistorial);
     el.hCategoria.addEventListener('change', onFiltroCategoriaChange);
@@ -1787,12 +1860,14 @@
     el.mNuevo.addEventListener('click', function () { abrirEditor(null); });
     el.mCancel.addEventListener('click', cerrarEditor);
     el.mSave.addEventListener('click', guardarMaestro);
-    el.mBuscar.addEventListener('input', renderMaestros);
+    el.mBuscar.addEventListener('input', debounce(renderMaestros, 150));
     el.mEstado.addEventListener('change', renderMaestros);
     el.mFCategoria.addEventListener('change', function () { rebuildSubcatFiltroMaestros(); renderMaestros(); });
     el.mFSubcategoria.addEventListener('change', renderMaestros);
     el.mLimpiar.addEventListener('click', limpiarFiltrosMaestros);
-    var subBtns = document.querySelectorAll('.subtab');
+    // OJO: acotado a [data-master]. Sin el atributo, los subtabs de Crédito
+    // también enganchaban acá y llamaban switchMaster(null) (It 4a).
+    var subBtns = document.querySelectorAll('.subtab[data-master]');
     for (var s = 0; s < subBtns.length; s++) {
       subBtns[s].addEventListener('click', function () { switchMaster(this.getAttribute('data-master')); });
     }
@@ -1805,10 +1880,10 @@
     el.cSave.addEventListener('click', guardarCompra);
     el.cFiltroTarjeta.addEventListener('change', cargarCompras);
     el.cFiltroEstado.addEventListener('change', cargarCompras);
-    el.cBuscar.addEventListener('input', pintarCompras);
+    el.cBuscar.addEventListener('input', debounce(pintarCompras, 150));
     el.cLimpiar.addEventListener('click', limpiarFiltrosCompras);
     el.pTarjeta.addEventListener('change', cargarPendientes);
-    el.pBuscar.addEventListener('input', pintarPendientes);
+    el.pBuscar.addEventListener('input', debounce(pintarPendientes, 150));
     el.pLimpiar.addEventListener('click', limpiarFiltrosPendientes);
     var credSubBtns = document.querySelectorAll('.subtab[data-credsub]');
     for (var cs = 0; cs < credSubBtns.length; cs++) {
@@ -1820,7 +1895,18 @@
     // Tocar el fondo (fuera de la tarjeta) o Escape = cancelar.
     el.modal.addEventListener('click', function (ev) { if (ev.target === el.modal) cerrarModal(false); });
     document.addEventListener('keydown', function (ev) {
-      if (ev.key === 'Escape' && !el.modal.hidden) cerrarModal(false);
+      if (el.modal.hidden) return;
+      if (ev.key === 'Escape') { cerrarModal(false); return; }
+      // Focus trap: mientras el modal está abierto, Tab no se escapa al fondo
+      // (It 4a). Los únicos focusables son los dos botones.
+      if (ev.key !== 'Tab') return;
+      ev.preventDefault();
+      var foco = [el.modalCancel, el.modalOk];
+      var i = foco.indexOf(document.activeElement);
+      var next = ev.shiftKey
+        ? (i <= 0 ? foco.length - 1 : i - 1)
+        : (i < 0 || i === foco.length - 1 ? 0 : i + 1);
+      foco[next].focus();
     });
 
     el.rGenerar.addEventListener('click', generarGrilla);
@@ -1864,7 +1950,8 @@
     function navegarTab(v) {
       if (v === 'form') { enterCreateMode(); showView('form'); }
       else if (v === 'maestros') { showView('maestros'); cargarMaestros(); }
-      else if (v === 'credito') { showView('credito'); switchCredSub('compras'); }
+      // Vuelve a la subtab en la que estabas, no siempre a Compras (It 4a).
+      else if (v === 'credito') { showView('credito'); switchCredSub(credSubActual); }
       else if (v === 'resumen') { showView('resumen'); if (!el.rFecha.value) el.rFecha.value = hoyISO(); }
       else { showView('historial'); cargarHistorial(); }
     }

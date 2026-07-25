@@ -34,7 +34,10 @@ Proyecto personal de Valentin con dos piezas en un mismo repo: (1) una app web d
 /src/                      # app (Apps Script)
   appsscript.json          # timeZone America/Argentina/Tucuman, V8, webapp MYSELF/USER_DEPLOYING
   Code.js  api.js  db.js  logic.js  migracion.js
+  tests.js                 # It 4: suite server (correrTests / medirPerf), corre en sandbox
   index.html  styles.html  app-js.html
+/tests/                    # It 4: NO se pushea con clasp (vive fuera de /src)
+  client-tests.js          # asserts de la lógica pura del front, para pegar en la consola
 /powerbi/                  # Power BI as code
   Gastos.pbip
   Gastos.SemanticModel/    # definition/*.tmdl  ← Claude Code edita acá
@@ -162,6 +165,12 @@ Botón global **"↻ Actualizar"**: tira el cache de vistas, re-sincroniza catá
 - **Performance del cliente (It 3b)**: `doGet` inyecta los catálogos en el HTML (`bootJSON_` → `window.__BOOT__`) para arrancar sin roundtrip; cache de vistas client-side stale-while-revalidate (`cacheVistas`, revalida a los 90s), invalidado por toda escritura (`invalidarCache`) y por el botón ↻. Búsquedas por texto y filtros de Maestros: **client-side**, no tocan cache ni server.
 - **CSS**: tema dark con custom properties en `:root` (`styles.html`); `color-scheme: dark` para widgets nativos. El reset `input, select { appearance:none; width:100% }` obliga a: flecha de desplegable propia (SVG data-URI en `background-image`) y override de `input[type="checkbox"]` — **no borrar ninguno**. Botones de acción por severidad: `.btn.danger` (rojo, destructivo), `.btn.warn` (ámbar, reversible). Confirmaciones con el modal propio `confirmar({titulo, mensaje, ok, danger|warn})` (promesa true/false), **nunca `window.confirm`**.
 
+**Tests (desde It 4):**
+- `src/tests.js` es la suite del server: `correrTests()` (unitarios puros + integración) y `medirPerf()`. Se corre desde el editor de Apps Script y reporta PASS/FAIL en el Logger.
+- **Los tests de integración NUNCA tocan la copia de trabajo**: usan una spreadsheet sandbox propia (Script Property `TEST_SHEET_ID`) vía un override temporal de `getSheetId_`. Si falta la property, la suite de integración se saltea con un aviso en vez de caer sobre datos reales.
+- Al tocar `api.js` / `logic.js` / `db.js`, agregar o ajustar su test en la misma entrega. Antes de cerrar una iteración: `correrTests()` en verde + el checklist manual.
+- La lógica pura del cliente se expone en `window.__TEST__` y se verifica con `tests/client-tests.js` pegado en la consola del navegador.
+
 **Power BI (PBIP):**
 - Claude Code edita únicamente `*.SemanticModel/definition/*.tmdl` y `*.Report/definition/**/*.json` (PBIR). Los schemas JSON de PBIR dan validación/IntelliSense en VS Code.
 - Loop de trabajo: Claude Code edita archivos → commit → **Valentin abre el .pbip en Power BI Desktop, verifica que carga sin errores, refresca y publica a Mi área de trabajo**. Incluir en cada entrega qué debería ver Valentin al abrirlo.
@@ -226,8 +235,43 @@ Power BI no tiene CLI en este proyecto: el "deploy" de BI es Valentin publicando
   - [x] **3d — modal de confirmación propio** (deploy @20): `confirmar({titulo, mensaje, ok, danger|warn})` (promesa true/false, cierra con backdrop/Escape) reemplaza los 5 `window.confirm` del navegador (borrar gasto, activar/desactivar y eliminar maestro, eliminar compra, aviso de cuota duplicada). Rojo para destructivo; ámbar para Desactivar (reversible).
   - [x] **3e — filtros extra + "Limpiar filtros" en todas las pestañas** (deploys @21-@22): Maestros gana filtros de categoría/subcategoría en cascada (solo subtab Categorías); búsqueda por texto en Historial (siempre visible), Crédito-Compras y Crédito-Pendientes (client-side, no toca cache ni server); "Limpiar filtros" en Compras, Pendientes y Maestros (deshabilitado si nada se aparta del default).
   - [x] **3f — atajos finos** (rama `it3e-opcional` → merge a main, deploy @24): del 3e opcional original Valentin dejó solo tres cosas (probó los cinco en una rama y descartó los otros dos). (1) **Atajos de fecha Hoy/Ayer** en el form de Cargar. (2) **Editar `nro_cuota` de una cuota**: al editar en el Historial un gasto que es cuota, aparece una caja con el vínculo read-only a la compra (`compra_label`, tarjeta) y un campo editable; el server (`actualizarGasto`) valida entero 1..`n_cuotas`. `listarGastos` ahora devuelve `compra_credito_id`, `compra_label`, `compra_ncuotas`. (3) **Aviso al salir de Pago Bulk** con una grilla generada sin confirmar (cambiar de pestaña o "Cambiar tarjeta") — usa el modal `confirmar`. **Descartados**: prellenado por último usado y chips de recientes (`getSugerencias` y su cableado se quitaron) — a Valentin no le sumaban.
-- [ ] **It 4 — Power BI as code**: Valentin crea el esqueleto UNA vez en Desktop (Obtener datos > Google Sheets → copia de trabajo; guardar como proyecto PBIP con PBIR en `/powerbi`; commit). Desde ahí, Claude Code desarrolla el modelo dimensional completo (Power Query + TMDL: dims, facts, FactCompromisos, `_Medidas`) y la primera página del reporte en PBIR. Loop: Claude edita → Valentin abre, valida, refresca, publica.
-- [ ] **It 5 — Reporte + resguardo**: páginas restantes del reporte (mensual por categoría/medio, tendencias MoM, tablero de cuotas y compromisos futuros, corte por moneda), backup semanal automático de la copia de trabajo (trigger horario de GAS), re-corrida de migración para el cutover.
+- [ ] **It 4 — QA, hardening y accesibilidad** (antes de Power BI): la app está funcionalmente completa y linda, pero nunca fue testeada sistemáticamente ni tiene red de seguridad ante regresiones. It 4 la audita a fondo (correctitud, performance medida, UX/UI, accesibilidad, robustez de datos), arregla lo que salga y deja una **suite de tests re-ejecutable** para que It 5/It 6 no rompan nada en silencio. Regla de oro de la iteración: **ningún test toca la copia de trabajo** — los tests de integración corren contra una spreadsheet sandbox aparte.
+  - [x] **4a — arreglo de los bugs ya detectados en la auditoría estática** (deploy @25, 2026-07-25): cerrados los hallazgos **1, 2, 3, 6, 9, 10, 12** y el debounce del **5** (la paginación del Historial queda para 4d, con datos de `medirPerf`). Detalle:
+    - **#1** Los listeners y el toggle de `switchMaster` pasan a `.subtab[data-master]`: los subtabs de Crédito ya no llaman `switchMaster(null)` ni pierden su `active` al entrar a Maestros.
+    - **#2** Cada vista pide con un **token por zona** (`pedirZona`/`respuestaVigente`): una respuesta que llega tarde se descarta en vez de pisar la vista, y no se dispara un pedido si ya viaja uno idéntico (misma zona + misma clave de filtros). `precargarHistorial()` pasó a ser `cargarHistorial()` a secas — el guard de duplicados hace innecesaria la lógica paralela que tenía.
+    - **#3** Fuera `maximum-scale=1` del viewport (`Code.js`): vuelve el pinch-zoom.
+    - **#5 (parcial)** `debounce(fn, 150)` en las cuatro búsquedas por texto (Historial, Maestros, Compras, Pendientes).
+    - **#6** Modal con **focus trap** (Tab cicla entre Cancelar/Confirmar), foco devuelto al elemento que lo abrió, y `body.modal-abierto { overflow:hidden }` para que el fondo no scrollee. Toast con `role="status" aria-live="polite"`.
+    - **#9** Volver a Crédito respeta la subtab en la que estabas (`switchCredSub(credSubActual)`).
+    - **#10** El filtro de categoría del Historial viaja como **`"Tipo|Categoria"`**: `Diario › Comida` y `Mensual › Comida` dejan de mezclarse. La etiqueta del desplegable solo antepone el Tipo cuando el nombre está repetido. `listarGastos` acepta el nombre pelado por compatibilidad.
+    - **#12** `leerTabla_` cachea también la tabla vacía.
+  - [ ] **4b — suite de tests server (`src/tests.js`)**: runner `correrTests()` ejecutable desde el editor de Apps Script, con reporte PASS/FAIL en el Logger y contador final. Dos capas: (1) **unitarios puros** de `logic.js` + validadores de `api.js` (sin tocar Sheets); (2) **integración** de `db.js` + endpoints contra una **spreadsheet sandbox** propia (id en Script Property `TEST_SHEET_ID`, creada una vez con `setupSandbox()`), seleccionada con un override de `getSheetId_` activo solo durante la corrida. Cada test siembra sus datos y trunca al terminar. Costo $0, sin servicios nuevos.
+  - [ ] **4c — tests de la lógica pura del cliente**: exponer las funciones puras del front (`formatMonto`, `parseMonto`, `montoAInput`, `fmtFecha`, `fmtFechaLarga`, agrupación por día, filtros por texto) en `window.__TEST__` y `tests/client-tests.js`: script que Valentin pega en la consola del navegador (PC) sobre la app real y que imprime PASS/FAIL. Sin build step, sin duplicar código, corre contra lo que está deployado.
+  - [ ] **4d — performance medida** (no percibida): `medirPerf()` en `tests.js` cronometra cada endpoint N veces sobre la sandbox (p50 / máx) y **prueba de carga con ~5.000 gastos sembrados** para ver dónde se cae `listarGastos` y el render del Historial. En el cliente, `performance.now()` alrededor de cada `google.script.run` bajo un flag (`window.__PERF__`). Salida: tabla de tiempos antes/después de los arreglos.
+  - [ ] **4e — accesibilidad y pulido de UI**: zoom habilitado en mobile, foco visible en botones/tabs/chips (`:focus-visible`), roles y estados ARIA (tabs, subtabs, toast `role="status"`, modal con focus trap + devolución de foco + scroll bloqueado), contraste verificado de `--muted` y de los estados sobre `--card`, targets táctiles, y navegación completa con teclado en desktop.
+  - [ ] **4f — robustez de datos**: atomicidad real de `confirmarResumen` (leer y escribir dentro del mismo lock), unicidad de id verificada al insertar, límites de longitud validados server-side (hoy la única barrera es el `maxlength` del cliente), y comportamiento defensivo ante una Sheet editada a mano (filas con FKs rotas, `activo` en texto, montos como texto).
+  - [ ] **4g — checklist manual guiada** (celu + PC): matriz de casos de borde que ningún test automático cubre (gestos táctiles, teclado numérico, calendario nativo, rotación, sesión vencida, red lenta), con resultado esperado por caso. Es el entregable con el que Valentin cierra la iteración.
+- [ ] **It 5 — Power BI as code**: Valentin crea el esqueleto UNA vez en Desktop (Obtener datos > Google Sheets → copia de trabajo; guardar como proyecto PBIP con PBIR en `/powerbi`; commit). Desde ahí, Claude Code desarrolla el modelo dimensional completo (Power Query + TMDL: dims, facts, FactCompromisos, `_Medidas`) y la primera página del reporte en PBIR. Loop: Claude edita → Valentin abre, valida, refresca, publica.
+- [ ] **It 6 — Reporte + resguardo**: páginas restantes del reporte (mensual por categoría/medio, tendencias MoM, tablero de cuotas y compromisos futuros, corte por moneda), backup semanal automático de la copia de trabajo (trigger horario de GAS), re-corrida de migración para el cutover.
+
+## Hallazgos de la auditoría It 4 (2026-07-25, revisión estática de `src/`)
+
+Detectados leyendo el código, **antes** de correr ningún test. Prioridad: 🔴 rompe algo, 🟡 degrada, ⚪ pulido.
+
+| # | Prio | Dónde | Qué pasa | Estado |
+|---|---|---|---|---|
+| 1 | 🔴 | `app-js.html` (listener de `.subtab`) | El listener se engancha a **todos** los `.subtab`, así que tocar Compras/Pendientes en Crédito llama `switchMaster(null)`: deja `masterActual = null`, desmarca los subtabs de Maestros y hace que Maestros muestre **Medios** con los filtros de Categoría visibles. | ✅ 4a |
+| 2 | 🔴 | `cargarHistorial` / `cargarCompras` / `cargarPendientes` | No se verifica que la respuesta corresponda a los filtros vigentes: cambiar dos filtros rápido puede pintar el resultado del **filtro viejo** si llega último. Tampoco se deduplican requests en vuelo (`precargarHistorial` + entrar al Historial = 2 llamadas). | ✅ 4a |
+| 3 | 🔴 | `Code.js` → `doGet` (`addMetaTag('viewport', …)`) | `maximum-scale=1` bloquea el pinch-zoom en el celu. Es una barrera de accesibilidad real y no aporta nada. | ✅ 4a |
+| 4 | 🟡 | `confirmarResumen` (`api.js`) | Lee el estado de pagos **fuera** del lock y escribe adentro: ventana de carrera si se confirma desde dos pestañas. Poco probable con un solo usuario, pero es la escritura más cara de deshacer. | → 4f |
+| 5 | 🟡 | `listarGastos` + `renderHistorial` | Sin límite ni paginación: siempre trae y **renderiza los 345 gastos** (y crece para siempre). Además la búsqueda por texto no tiene debounce → re-render completo del DOM por tecla. | 🟠 debounce ✅ 4a; paginación → 4d |
+| 6 | 🟡 | Modal / toast | El modal no atrapa el foco, no lo devuelve al cerrar y no bloquea el scroll del fondo; el toast no es anunciado (`role="status"`). | ✅ 4a |
+| 7 | 🟡 | `insertarFilas_` / `nuevoId_` | El id de 8 hex no se verifica contra los existentes. Con ~5.000 filas la probabilidad acumulada de colisión ronda 0,3%: barato chequearlo al insertar. | → 4f |
+| 8 | 🟡 | `validarGastoPayload_` / `validarCompraPayload_` / `validarCategoria_` | No hay límite de longitud server-side: el `maxlength` del cliente es la única barrera. | → 4f |
+| 9 | ⚪ | `navegarTab('credito')` | Volver a Crédito siempre resetea a la subtab Compras, aunque hayas salido desde Pendientes. | ✅ 4a |
+| 10 | ⚪ | Filtro Categoría del Historial | Filtra por **nombre**, no por id: dos categorías con el mismo nombre en distinto Tipo (`Diario › Comida` y `Mensual › Comida`) se mezclan. | ✅ 4a |
+| 11 | ⚪ | `styles.html` | `.btn` / `.tab` / `.icon-btn` / `.chip` no declaran `:focus-visible`; el placeholder de `r-tarjeta` / `r-medio` es una opción seleccionable con value vacío en vez de un placeholder deshabilitado. | → 4e |
+| 12 | ⚪ | `leerTabla_` | El caso "tabla vacía" sale sin cachearse: se relee en cada llamada de la misma ejecución. | ✅ 4a |
 
 Al completar una iteración, marcarla acá y anotar lo decidido en "Registro de decisiones".
 

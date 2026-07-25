@@ -7,7 +7,9 @@ function doGet() {
   t.boot = bootJSON_();
   return t.evaluate()
     .setTitle('Gastos')
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover')
+    // Sin maximum-scale: bloquear el pinch-zoom es una barrera de accesibilidad
+    // real en el celu y no aportaba nada (It 4a).
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 

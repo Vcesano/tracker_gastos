@@ -51,9 +51,10 @@ function leerTabla_(nombre) {
   var hoja = abrirSS_().getSheetByName(nombre);
   if (!hoja) throw new Error('No existe la pestaña "' + nombre + '".');
   var lr = hoja.getLastRow(), lc = hoja.getLastColumn();
-  if (lr < 1 || lc < 1) return [];
+  // Tabla vacía: también se cachea, si no se releía en cada llamada de la
+  // misma ejecución (It 4a).
+  if (lr < 2 || lc < 1) { TABLA_MEMO_[nombre] = []; return TABLA_MEMO_[nombre]; }
   var headers = hoja.getRange(1, 1, 1, lc).getValues()[0].map(function (h) { return String(h).trim(); });
-  if (lr < 2) return [];
   var rows = hoja.getRange(2, 1, lr - 1, lc).getValues();
   var datos = rows.map(function (r) {
     var o = {};
