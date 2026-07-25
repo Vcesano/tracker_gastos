@@ -192,10 +192,19 @@ function indexar_(headers) {
   return idx;
 }
 
-/** Fecha ISO yyyy-MM-dd si es Date; si no, el valor tal cual como texto. */
+/**
+ * Fecha ISO yyyy-MM-dd si es Date; si no, el valor tal cual como texto.
+ *
+ * Se formatea con la timezone de la SPREADSHEET (tzSheet_), no con una fija:
+ * es la que Sheets usó para interpretar la celda, así que es la única con la
+ * que escribir '2026-07-21' y leerlo de vuelta da '2026-07-21'. Con una tz
+ * hardcodeada, una spreadsheet en otra zona corría todas las fechas un día
+ * (y de paso rompía en silencio el guard de duplicados de Pago Bulk, que
+ * compara compra|fecha). Detectado por los tests de It 4b.
+ */
 function fechaISO_(v) {
   if (Object.prototype.toString.call(v) === '[object Date]') {
-    return Utilities.formatDate(v, 'America/Argentina/Tucuman', 'yyyy-MM-dd');
+    return Utilities.formatDate(v, tzSheet_(), 'yyyy-MM-dd');
   }
   return String(v);
 }

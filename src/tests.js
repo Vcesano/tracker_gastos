@@ -175,9 +175,10 @@ function fixtures_() {
  * bloqueado. Restaura todo al salir, incluso si `fn` tira.
  */
 function conFixtures_(fn) {
-  var memo = TABLA_MEMO_, ss = SS_MEMO_, gs = getSheetId_;
+  var memo = TABLA_MEMO_, ss = SS_MEMO_, tz = TZ_MEMO_, gs = getSheetId_;
   TABLA_MEMO_ = fixtures_();
   SS_MEMO_ = null;
+  TZ_MEMO_ = null;
   getSheetId_ = function () {
     throw new Error('Un test unitario intentó abrir una spreadsheet real (no debería).');
   };
@@ -186,6 +187,7 @@ function conFixtures_(fn) {
   } finally {
     TABLA_MEMO_ = memo;
     SS_MEMO_ = ss;
+    TZ_MEMO_ = tz;
     getSheetId_ = gs;
   }
 }
@@ -579,6 +581,11 @@ function setupSandbox() {
   var ss = SpreadsheetApp.openById(idTest);
   var nombres = ss.getSheets().map(function (h) { return h.getName(); });
 
+  // La sandbox tiene que espejar la copia de trabajo también en la timezone:
+  // es la que Sheets usa para interpretar las celdas de fecha.
+  var tzProyecto = Session.getScriptTimeZone();
+  if (ss.getSpreadsheetTimeZone() !== tzProyecto) ss.setSpreadsheetTimeZone(tzProyecto);
+
   // Guarda: si tiene pestañas legacy_*, es una copia de datos reales, no una
   // sandbox. Mejor abortar que arriesgarse a truncarla en cada corrida.
   var legacy = nombres.filter(function (n) { return n.indexOf('legacy_') === 0; });
@@ -587,7 +594,10 @@ function setupSandbox() {
       '): parece una copia de datos reales, no una sandbox. Usá una spreadsheet nueva y vacía.');
   }
 
-  var log = ['Sandbox: ' + ss.getName() + ' (' + idTest + ')'];
+  var log = [
+    'Sandbox: ' + ss.getName() + ' (' + idTest + ')',
+    'Timezone: ' + ss.getSpreadsheetTimeZone() + ' (proyecto: ' + tzProyecto + ')'
+  ];
   Object.keys(SCHEMA).forEach(function (nombre) {
     if (ss.getSheetByName(nombre)) {
       log.push('Ya existe "' + nombre + '" → se deja como está.');
@@ -615,9 +625,10 @@ function conSandbox_(fn) {
     throw new Error('TEST_SHEET_ID es igual a SHEET_ID: los tests NUNCA corren sobre la copia de trabajo.');
   }
 
-  var gs = getSheetId_, memo = TABLA_MEMO_, ss = SS_MEMO_;
+  var gs = getSheetId_, memo = TABLA_MEMO_, ss = SS_MEMO_, tz = TZ_MEMO_;
   getSheetId_ = function () { return idTest; };
   SS_MEMO_ = null;
+  TZ_MEMO_ = null;
   TABLA_MEMO_ = {};
   try {
     if (getSheetId_() !== idTest) {
@@ -627,8 +638,9 @@ function conSandbox_(fn) {
     return fn();
   } finally {
     getSheetId_ = gs;
-    SS_MEMO_ = null;
-    TABLA_MEMO_ = {};
+    SS_MEMO_ = ss;
+    TZ_MEMO_ = tz;
+    TABLA_MEMO_ = memo;
   }
 }
 
@@ -745,8 +757,32 @@ function testsEndpoints_() {
     eq_(g[0].categoria_label, 'Comida › Almuerzo');
     eq_(g[0].medio_label, 'Efectivo');
     eq_(g[0].monto, 4500);
+    eq_(g[0].fecha, '2026-07-20');
     eq_(g[0].es_cuota, false);
     ok_(String(leerTabla_('Gastos')[0].creado_en).length > 0, 'debería sellar creado_en');
+  });
+
+  // Regresión de It 4b: Sheets guarda las fechas como serial y las interpreta
+  // en la timezone DE LA SPREADSHEET. Con una tz hardcodeada en fechaISO_, todo
+  // el round-trip se corría un día contra una spreadsheet en otra zona.
+  test_('las fechas hacen round-trip exacto por Sheets (sin corrimiento de día)', function () {
+    var ids = sembrarMaestros_();
+    var fechas = ['2026-01-01', '2026-07-20', '2026-12-31', '2026-02-28', '2026-06-30'];
+    fechas.forEach(function (f, i) {
+      resOk_(crearGasto({
+        fecha: f, descripcion: 'F' + i, categoria_id: ids.catComida,
+        medio_pago_id: ids.efectivo, monto: 100 + i, moneda: 'ARS'
+      }));
+    });
+    var g = resOk_(listarGastos({})).gastos;
+    eq_(g.length, fechas.length);
+    fechas.forEach(function (f, i) {
+      var fila = g.filter(function (x) { return x.descripcion === 'F' + i; })[0];
+      eq_(fila.fecha, f, 'la fecha volvió distinta de como se escribió');
+    });
+    // Y el filtro por rango tiene que ver esas mismas fechas.
+    eq_(resOk_(listarGastos({ desde: '2026-07-20', hasta: '2026-07-20' })).gastos.length, 1);
+    eq_(resOk_(listarGastos({ desde: '2026-12-31' })).gastos.length, 1);
   });
 
   test_('crearGasto rechaza pagar con tarjeta de crédito y categorías inactivas', function () {

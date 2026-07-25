@@ -21,8 +21,32 @@ var SS_MEMO_ = null;
 
 /** Abre la spreadsheet de trabajo (la COPIA). */
 function abrirSS_() {
-  if (!SS_MEMO_) SS_MEMO_ = SpreadsheetApp.openById(getSheetId_());
+  if (!SS_MEMO_) {
+    SS_MEMO_ = SpreadsheetApp.openById(getSheetId_());
+    TZ_MEMO_ = null;   // otra spreadsheet, otra timezone posible
+  }
   return SS_MEMO_;
+}
+
+/**
+ * Timezone de la spreadsheet, memoizada por ejecución (It 4b).
+ *
+ * Sheets guarda las fechas como número de serie y las interpreta en la
+ * timezone DE LA SPREADSHEET, no en la del script. Escribir el texto
+ * '2026-07-21' y volver a leerlo devuelve un Date que representa medianoche en
+ * esa timezone: si después lo formateamos con otra, la fecha se corre un día.
+ * Formatear con la de la spreadsheet es lo único que hace el round-trip exacto.
+ */
+var TZ_MEMO_ = null;
+
+function tzSheet_() {
+  try {
+    abrirSS_();                                   // resetea TZ_MEMO_ si reabrió
+    if (!TZ_MEMO_) TZ_MEMO_ = SS_MEMO_.getSpreadsheetTimeZone();
+    return TZ_MEMO_;
+  } catch (e) {
+    return 'America/Argentina/Tucuman';           // sin Sheet a mano: la del proyecto
+  }
 }
 
 /**
