@@ -68,6 +68,7 @@
       mFSubcategoria: $('m-f-subcategoria'),
       mFcWrap: $('m-fc-wrap'),
       mFsWrap: $('m-fs-wrap'),
+      mLimpiar: $('m-limpiar'),
       mResumen: $('m-resumen'),
       mList: $('m-list'),
       dlTipos: $('dl-tipos'),
@@ -92,12 +93,14 @@
       cFiltroTarjeta: $('c-filtro-tarjeta'),
       cFiltroEstado: $('c-filtro-estado'),
       cBuscar: $('c-buscar'),
+      cLimpiar: $('c-limpiar'),
       cResumen: $('c-resumen'),
       cList: $('c-list'),
       credCompras: $('cred-compras'),
       credPendientes: $('cred-pendientes'),
       pTarjeta: $('p-tarjeta'),
       pBuscar: $('p-buscar'),
+      pLimpiar: $('p-limpiar'),
       pResumen: $('p-resumen'),
       pList: $('p-list'),
       // resumen de tarjeta (batch)
@@ -824,7 +827,24 @@
       rebuildSubcatFiltroMaestros();
     }
 
+    // Habilita "Limpiar filtros" solo si algo se aparta del default (estado por
+    // default = activos; el resto vacío).
+    function actualizarLimpiarMaestros() {
+      var esCat = masterActual === 'categorias';
+      var activo = !!el.mBuscar.value || el.mEstado.value !== 'activos' ||
+        (esCat && (!!el.mFCategoria.value || !!el.mFSubcategoria.value));
+      el.mLimpiar.disabled = !activo;
+    }
+    function limpiarFiltrosMaestros() {
+      el.mBuscar.value = '';
+      el.mFCategoria.value = '';
+      rebuildSubcatFiltroMaestros();
+      el.mEstado.value = 'activos';
+      renderMaestros();
+    }
+
     function renderMaestros() {
+      actualizarLimpiarMaestros();
       var esCat = masterActual === 'categorias';
       var items = esCat ? maestros.categorias : maestros.medios;
       var lista = filtrarMaestros(items).sort(function (a, b) {
@@ -1134,7 +1154,16 @@
         return hay.toLowerCase().indexOf(q) >= 0;
       });
     }
-    function pintarCompras() { renderCompras(comprasFiltradas()); }
+    function actualizarLimpiarCompras() {
+      el.cLimpiar.disabled = !(el.cBuscar.value || el.cFiltroTarjeta.value || el.cFiltroEstado.value !== 'pendientes');
+    }
+    function limpiarFiltrosCompras() {
+      el.cBuscar.value = '';
+      el.cFiltroTarjeta.value = '';
+      el.cFiltroEstado.value = 'pendientes';
+      cargarCompras();
+    }
+    function pintarCompras() { actualizarLimpiarCompras(); renderCompras(comprasFiltradas()); }
 
     function cargarCompras() {
       cerrarEditorCompra();
@@ -1169,8 +1198,18 @@
     var credSubActual = 'compras';   // 'compras' | 'pendientes'
     var pendientesActuales = [];     // última lista traída (para filtrar por texto)
 
+    function actualizarLimpiarPendientes() {
+      el.pLimpiar.disabled = !(el.pBuscar.value || el.pTarjeta.value);
+    }
+    function limpiarFiltrosPendientes() {
+      el.pBuscar.value = '';
+      el.pTarjeta.value = '';
+      cargarPendientes();
+    }
+
     // Búsqueda por texto en Pendientes (client-side, antes de agrupar).
     function pintarPendientes() {
+      actualizarLimpiarPendientes();
       var q = (el.pBuscar.value || '').trim().toLowerCase();
       var lista = !q ? pendientesActuales : pendientesActuales.filter(function (c) {
         return ((c.descripcion || '') + ' ' + (c.tarjeta_label || '')).toLowerCase().indexOf(q) >= 0;
@@ -1695,6 +1734,7 @@
     el.mEstado.addEventListener('change', renderMaestros);
     el.mFCategoria.addEventListener('change', function () { rebuildSubcatFiltroMaestros(); renderMaestros(); });
     el.mFSubcategoria.addEventListener('change', renderMaestros);
+    el.mLimpiar.addEventListener('click', limpiarFiltrosMaestros);
     var subBtns = document.querySelectorAll('.subtab');
     for (var s = 0; s < subBtns.length; s++) {
       subBtns[s].addEventListener('click', function () { switchMaster(this.getAttribute('data-master')); });
@@ -1709,8 +1749,10 @@
     el.cFiltroTarjeta.addEventListener('change', cargarCompras);
     el.cFiltroEstado.addEventListener('change', cargarCompras);
     el.cBuscar.addEventListener('input', pintarCompras);
+    el.cLimpiar.addEventListener('click', limpiarFiltrosCompras);
     el.pTarjeta.addEventListener('change', cargarPendientes);
     el.pBuscar.addEventListener('input', pintarPendientes);
+    el.pLimpiar.addEventListener('click', limpiarFiltrosPendientes);
     var credSubBtns = document.querySelectorAll('.subtab[data-credsub]');
     for (var cs = 0; cs < credSubBtns.length; cs++) {
       credSubBtns[cs].addEventListener('click', function () { switchCredSub(this.getAttribute('data-credsub')); });
