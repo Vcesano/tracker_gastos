@@ -161,10 +161,17 @@ function listarGastos(filtros) {
     var medLabel = {};
     leerTabla_('MediosPago').forEach(function (m) { medLabel[String(m.id)] = String(m.entidad || ''); });
 
-    // Tarjeta de cada compra a crédito, para derivar la tarjeta real de una cuota
-    // (el medio_pago_id de la cuota es la CUENTA que paga el resumen, no la tarjeta).
-    var compraCard = {};
-    leerTabla_('ComprasCredito').forEach(function (c) { compraCard[String(c.id)] = String(c.medio_pago_id || ''); });
+    // Info de cada compra a crédito, para derivar la tarjeta real de una cuota
+    // (el medio_pago_id de la cuota es la CUENTA que paga el resumen, no la
+    // tarjeta) y para el editor de cuota del Historial (It 3e).
+    var compraInfo = {};
+    leerTabla_('ComprasCredito').forEach(function (c) {
+      compraInfo[String(c.id)] = {
+        medio: String(c.medio_pago_id || ''),
+        descripcion: String(c.descripcion || ''),
+        n_cuotas: Number(c.n_cuotas) || 0
+      };
+    });
 
     var gastos = leerTabla_('Gastos').map(function (g) {
       var cid = String(g.categoria_id || ''), mid = String(g.medio_pago_id || '');
@@ -172,7 +179,8 @@ function listarGastos(filtros) {
       var nro = g.nro_cuota === '' || g.nro_cuota === null ? '' : (Number(g.nro_cuota) || '');
       var compraId = String(g.compra_credito_id || '').trim();
       var esCuota = compraId !== '';
-      var tarjetaId = esCuota ? (compraCard[compraId] || '') : '';
+      var cinfo = esCuota ? (compraInfo[compraId] || null) : null;
+      var tarjetaId = cinfo ? cinfo.medio : '';
       return {
         id: String(g.id),
         fecha: fechaISO_(g.fecha),
@@ -187,6 +195,9 @@ function listarGastos(filtros) {
         moneda: String(g.moneda || ''),
         es_cuota: esCuota,
         nro_cuota: nro,
+        compra_credito_id: compraId,
+        compra_label: cinfo ? cinfo.descripcion : '',
+        compra_ncuotas: cinfo ? cinfo.n_cuotas : 0,
         tarjeta_id: tarjetaId,
         tarjeta_label: tarjetaId ? (medLabel[tarjetaId] || tarjetaId) : ''
       };
@@ -212,7 +223,11 @@ function listarGastos(filtros) {
 
 /**
  * Edita un gasto existente. Solo toca los 6 campos editables; conserva id,
- * creado_en y el vínculo de cuota (compra_credito_id, nro_cuota) intactos.
+ * creado_en y el vínculo a la compra (compra_credito_id) intacto.
+ *
+ * `nro_cuota` (It 3e): editable SOLO si el gasto es realmente una cuota
+ * (tiene compra_credito_id). Se valida entero entre 1 y la cantidad de cuotas
+ * de la compra. Si el gasto no es cuota, se ignora (no se puede inventar una).
  */
 function actualizarGasto(id, payload) {
   try {
@@ -222,14 +237,30 @@ function actualizarGasto(id, payload) {
     var v = validarGastoPayload_(payload);
     if (!v.ok) return v;
 
-    var ok = actualizarFila_('Gastos', id, {
+    var cambios = {
       fecha: v.data.fecha,
       descripcion: v.data.descripcion,
       categoria_id: v.data.categoria_id,
       medio_pago_id: v.data.medio_pago_id,
       monto: v.data.monto,
       moneda: v.data.moneda
-    });
+    };
+
+    var pedidoNro = payload && payload.nro_cuota !== undefined && payload.nro_cuota !== null && String(payload.nro_cuota).trim() !== '';
+    if (pedidoNro) {
+      var gasto = leerTabla_('Gastos').filter(function (g) { return String(g.id) === id; })[0];
+      if (!gasto) return { ok: false, error: 'No se encontró el gasto (¿ya fue borrado?).' };
+      var compraId = String(gasto.compra_credito_id || '').trim();
+      if (!compraId) return { ok: false, error: 'Este gasto no es una cuota: no tiene número de cuota.' };
+      var nro = Number(payload.nro_cuota);
+      if (!Number.isInteger(nro) || nro < 1) return { ok: false, error: 'El número de cuota debe ser un entero mayor o igual a 1.' };
+      var compra = leerTabla_('ComprasCredito').filter(function (c) { return String(c.id) === compraId; })[0];
+      var maxN = compra ? (Number(compra.n_cuotas) || 0) : 0;
+      if (maxN && nro > maxN) return { ok: false, error: 'La compra tiene ' + maxN + ' cuotas: el número no puede ser mayor.' };
+      cambios.nro_cuota = nro;
+    }
+
+    var ok = actualizarFila_('Gastos', id, cambios);
     if (!ok) return { ok: false, error: 'No se encontró el gasto (¿ya fue borrado?).' };
     return { ok: true, data: { id: id } };
   } catch (e) {

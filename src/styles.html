@@ -231,6 +231,37 @@
   .btn-sec:hover { color: var(--text); border-color: var(--deep-border); }
   .btn-sec:active { background: rgba(255, 255, 255, 0.04); }
 
+  /* --- Atajos de fecha Hoy/Ayer (It 3e) --- */
+  .chip {
+    appearance: auto;
+    width: auto;
+    min-height: 0;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text);
+    background: var(--field);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 7px 14px;
+    cursor: pointer;
+    line-height: 1.2;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .chip:active { background: var(--accent-soft); }
+
+  .date-shortcuts { display: flex; gap: 8px; margin: -6px 0 14px; }
+
+  /* Caja de cuota (editar un pago de cuota): resalta el vínculo a la compra. */
+  .cuota-box {
+    background: var(--deep);
+    border: 1px solid var(--deep-border);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 4px;
+  }
+  .cuota-info { font-size: 0.85rem; color: var(--text); margin-bottom: 10px; }
+  .cuota-box .field { margin-bottom: 0; }
+
   /* Separación entre un botón de acción (➕ Nueva compra / ➕ Agregar) y la
      fila de filtros que viene abajo: quedaban pegados. */
   .btn + .filtros-row,

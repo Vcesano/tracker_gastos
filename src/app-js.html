@@ -10,6 +10,7 @@
     var optTipos = [];     // opciones de "Tipo" (categorías)
     var optTiposMedio = [];// opciones de "Tipo de medio" (sin Credito)
     var editId = null;     // id del gasto en edición; null = alta
+    var editEsCuota = false; // el gasto en edición es una cuota (habilita nro_cuota)
     var histActuales = []; // últimos gastos listados (para resolver Editar)
 
     var el = {
@@ -34,6 +35,10 @@
       descripcion: $('f-descripcion'),
       submit: $('f-submit'),
       limpiar: $('f-limpiar'),
+      fDateShortcuts: $('f-date-shortcuts'),
+      fCuotaBox: $('f-cuota-box'),
+      fCuotaInfo: $('f-cuota-info'),
+      fNrocuota: $('f-nrocuota'),
       // historial
       histCard: $('historial-card'),
       hDesde: $('h-desde'),
@@ -151,6 +156,12 @@
       if (!m) return String(iso);
       var d = new Date(+m[1], +m[2] - 1, +m[3]);
       return DIAS_SEM[d.getDay()] + ' ' + m[3] + '/' + m[2] + '/' + m[1];
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"]/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+      });
     }
 
     function distinct(arr) {
@@ -354,16 +365,28 @@
       el.monto.value = ''; el.moneda.value = 'ARS'; el.descripcion.value = '';
     }
 
+    // Fecha de hace n días en ISO local (para los atajos Hoy/Ayer del form).
+    function fechaMenosDias(n) {
+      var d = new Date();
+      d.setDate(d.getDate() - n);
+      var mm = String(d.getMonth() + 1).padStart(2, '0');
+      var dd = String(d.getDate()).padStart(2, '0');
+      return d.getFullYear() + '-' + mm + '-' + dd;
+    }
+
     function enterCreateMode() {
       editId = null;
+      editEsCuota = false;
       el.formTitle.textContent = 'Nuevo gasto';
       el.submit.textContent = 'Guardar gasto';
       el.editBanner.hidden = true;
+      el.fCuotaBox.hidden = true;
       resetFormFields();
     }
 
     function enterEditMode(g) {
       editId = g.id;
+      editEsCuota = !!g.es_cuota;
       el.formTitle.textContent = 'Editar gasto';
       el.submit.textContent = 'Guardar cambios';
       el.editBanner.hidden = false;
@@ -378,6 +401,22 @@
       el.monto.value = montoAInput(g.monto);
       el.moneda.value = g.moneda || 'ARS';
       el.descripcion.value = g.descripcion || '';
+
+      // Cuota: mostrar el vínculo a la compra (read-only) y permitir corregir
+      // el nro de cuota. La tarjeta y el medio con que se pagó ya salen arriba.
+      if (editEsCuota) {
+        var compra = g.compra_label || '(compra)';
+        var total = g.compra_ncuotas ? '/' + g.compra_ncuotas : '';
+        el.fCuotaInfo.innerHTML = 'Cuota de <strong>' + escapeHtml(compra) + '</strong>' +
+          (g.tarjeta_label ? ' · 💳 ' + escapeHtml(g.tarjeta_label) : '');
+        el.fNrocuota.value = g.nro_cuota || '';
+        if (g.compra_ncuotas) el.fNrocuota.max = g.compra_ncuotas; else el.fNrocuota.removeAttribute('max');
+        el.fNrocuota.placeholder = 'Cuota N' + total;
+        el.fCuotaBox.hidden = false;
+      } else {
+        el.fCuotaBox.hidden = true;
+      }
+
       showView('form');
       window.scrollTo(0, 0);
     }
@@ -628,6 +667,14 @@
         monto: monto,
         moneda: el.moneda.value
       };
+
+      // Al editar una cuota, se puede corregir el nro de cuota (el server valida
+      // que sea entero y no supere las cuotas de la compra).
+      if (editId && editEsCuota && el.fNrocuota.value !== '') {
+        var nro = parseInt(el.fNrocuota.value, 10);
+        if (!(nro >= 1)) { toast('El número de cuota debe ser 1 o más.', 'err'); el.fNrocuota.focus(); return; }
+        payload.nro_cuota = nro;
+      }
 
       var editando = !!editId;
       el.submit.disabled = true;
@@ -1349,6 +1396,11 @@
       el.rTotal.textContent = '';
     }
 
+    // Hay una grilla generada y sin confirmar (It 3e): avisar antes de perderla.
+    function gridPendiente() {
+      return viewActual === 'resumen' && !el.rGridWrap.hidden && rItems.length > 0;
+    }
+
     // Suma por moneda de las filas incluidas (tildadas), sin mezclar monedas.
     function actualizarTotalResumen() {
       var porMoneda = {}, n = 0;
@@ -1709,6 +1761,11 @@
     el.tipomedio.addEventListener('change', onTipoMedioChange);
     el.monto.addEventListener('input', function () { el.monto.value = formatMonto(el.monto.value); });
     el.form.addEventListener('submit', onSubmit);
+    el.fDateShortcuts.addEventListener('click', function (ev) {
+      var b = ev.target && ev.target.getAttribute ? ev.target : null;
+      if (!b || !b.hasAttribute('data-days')) return;
+      el.fecha.value = fechaMenosDias(parseInt(b.getAttribute('data-days'), 10) || 0);
+    });
     el.limpiar.addEventListener('click', function () { enterCreateMode(); showView('form'); });
     el.editCancel.addEventListener('click', function () { enterCreateMode(); showView('form'); });
 
@@ -1767,7 +1824,14 @@
     });
 
     el.rGenerar.addEventListener('click', generarGrilla);
-    el.rReset.addEventListener('click', resetResumen);
+    el.rReset.addEventListener('click', function () {
+      if (!rItems.length) { resetResumen(); return; }
+      confirmar({
+        titulo: 'Cambiar tarjeta',
+        mensaje: 'Se descarta la grilla actual sin cargar.\n¿Seguir?',
+        ok: 'Cambiar', warn: true
+      }).then(function (ok) { if (ok) resetResumen(); });
+    });
     el.rAddSuelto.addEventListener('click', agregarFilaSuelto);
     el.rConfirmar.addEventListener('click', confirmarResumenClick);
 
@@ -1797,15 +1861,29 @@
       });
     });
 
+    function navegarTab(v) {
+      if (v === 'form') { enterCreateMode(); showView('form'); }
+      else if (v === 'maestros') { showView('maestros'); cargarMaestros(); }
+      else if (v === 'credito') { showView('credito'); switchCredSub('compras'); }
+      else if (v === 'resumen') { showView('resumen'); if (!el.rFecha.value) el.rFecha.value = hoyISO(); }
+      else { showView('historial'); cargarHistorial(); }
+    }
+
     var tabBtns = document.querySelectorAll('.tab');
     for (var i = 0; i < tabBtns.length; i++) {
       tabBtns[i].addEventListener('click', function () {
         var v = this.getAttribute('data-view');
-        if (v === 'form') { enterCreateMode(); showView('form'); }
-        else if (v === 'maestros') { showView('maestros'); cargarMaestros(); }
-        else if (v === 'credito') { showView('credito'); switchCredSub('compras'); }
-        else if (v === 'resumen') { showView('resumen'); if (!el.rFecha.value) el.rFecha.value = hoyISO(); }
-        else { showView('historial'); cargarHistorial(); }
+        // Salir de Pago Bulk con una grilla generada sin confirmar la descarta:
+        // avisar antes (It 3e).
+        if (v !== 'resumen' && gridPendiente()) {
+          confirmar({
+            titulo: 'Salir sin cargar',
+            mensaje: 'Generaste una grilla de pagos que todavía no confirmaste. Si salís, se pierde.\n¿Salir igual?',
+            ok: 'Salir', warn: true
+          }).then(function (ok) { if (ok) { resetResumen(); navegarTab(v); } });
+          return;
+        }
+        navegarTab(v);
       });
     }
 
