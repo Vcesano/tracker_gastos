@@ -175,10 +175,9 @@ function fixtures_() {
  * bloqueado. Restaura todo al salir, incluso si `fn` tira.
  */
 function conFixtures_(fn) {
-  var memo = TABLA_MEMO_, ss = SS_MEMO_, tz = TZ_MEMO_, gs = getSheetId_;
+  var memo = TABLA_MEMO_, ss = SS_MEMO_, gs = getSheetId_;
   TABLA_MEMO_ = fixtures_();
   SS_MEMO_ = null;
-  TZ_MEMO_ = null;
   getSheetId_ = function () {
     throw new Error('Un test unitario intentó abrir una spreadsheet real (no debería).');
   };
@@ -187,7 +186,6 @@ function conFixtures_(fn) {
   } finally {
     TABLA_MEMO_ = memo;
     SS_MEMO_ = ss;
-    TZ_MEMO_ = tz;
     getSheetId_ = gs;
   }
 }
@@ -625,10 +623,9 @@ function conSandbox_(fn) {
     throw new Error('TEST_SHEET_ID es igual a SHEET_ID: los tests NUNCA corren sobre la copia de trabajo.');
   }
 
-  var gs = getSheetId_, memo = TABLA_MEMO_, ss = SS_MEMO_, tz = TZ_MEMO_;
+  var gs = getSheetId_, memo = TABLA_MEMO_, ss = SS_MEMO_;
   getSheetId_ = function () { return idTest; };
   SS_MEMO_ = null;
-  TZ_MEMO_ = null;
   TABLA_MEMO_ = {};
   try {
     if (getSheetId_() !== idTest) {
@@ -639,7 +636,6 @@ function conSandbox_(fn) {
   } finally {
     getSheetId_ = gs;
     SS_MEMO_ = ss;
-    TZ_MEMO_ = tz;
     TABLA_MEMO_ = memo;
   }
 }
@@ -1001,6 +997,157 @@ function testsEndpoints_() {
     resErr_(borrarMedio(ids.efectivo), 'no se puede eliminar');
     resOk_(borrarMedio(nuevo), 'sin referencias sí se borra');
   });
+}
+
+/* ===================== Diagnóstico ===================== */
+
+/**
+ * Mide qué hace REALMENTE Sheets con una fecha, en vez de suponerlo. Corre solo
+ * contra la sandbox y deja la pestaña Gastos truncada al terminar.
+ *
+ * Contexto: los tests de It 4b mostraron que escribir el texto '2026-01-01' y
+ * leerlo de vuelta da un día menos. Formatear con la timezone de la spreadsheet
+ * no lo arregló, así que el Date que devuelve getValues() no representa
+ * medianoche ni en la tz del script ni en la de la spreadsheet. Esto imprime
+ * todos los datos necesarios para saber en cuál sí, y de paso prueba la
+ * alternativa de guardar la columna como texto plano.
+ */
+function diagnosticoFechas() {
+  var idTest = idSandbox_();
+  if (!idTest) throw new Error('Falta la Script Property "TEST_SHEET_ID".');
+  if (idTest === idTrabajo_()) throw new Error('TEST_SHEET_ID es igual a SHEET_ID.');
+
+  var out = [];
+  var p = function (s) { out.push(s); };
+
+  return conSandbox_(function () {
+    var ss = abrirSS_();
+    var hoja = ss.getSheetByName('Gastos');
+    var tzScript = Session.getScriptTimeZone();
+    var tzSheet = ss.getSpreadsheetTimeZone();
+
+    p('═══ Diagnóstico de fechas ═══');
+    p('Script TZ:      ' + tzScript);
+    p('Spreadsheet TZ: ' + tzSheet);
+    p('Locale:         ' + ss.getSpreadsheetLocale());
+    p('');
+
+    // --- Caso 1: como escribe la app hoy (texto ISO por insertarFilas_) ---
+    insertarFilas_('Gastos', [{
+      id: 'diag0001', fecha: '2026-01-01', descripcion: 'diag', categoria_id: 'x',
+      medio_pago_id: 'y', monto: 1, moneda: 'ARS', compra_credito_id: '',
+      nro_cuota: '', creado_en: ahoraISO_()
+    }]);
+
+    var colFecha = SCHEMA.Gastos.indexOf('fecha') + 1;
+    var celda = hoja.getRange(2, colFecha);
+    var v = celda.getValue();
+
+    p('--- Caso 1: setValues con el texto "2026-01-01" ---');
+    p('typeof:          ' + (typeof v));
+    p('es Date:         ' + (Object.prototype.toString.call(v) === '[object Date]'));
+    p('numberFormat:    ' + celda.getNumberFormat());
+    p('getDisplayValue: ' + celda.getDisplayValue());
+    if (Object.prototype.toString.call(v) === '[object Date]') {
+      p('toISOString:     ' + v.toISOString());
+      p('getTime:         ' + v.getTime());
+      p('formatDate UTC:            ' + Utilities.formatDate(v, 'UTC', 'yyyy-MM-dd HH:mm'));
+      p('formatDate script tz:      ' + Utilities.formatDate(v, tzScript, 'yyyy-MM-dd HH:mm'));
+      p('formatDate spreadsheet tz: ' + Utilities.formatDate(v, tzSheet, 'yyyy-MM-dd HH:mm'));
+      p('=> fechaISO_ devuelve:     ' + fechaISO_(v));
+    } else {
+      p('valor crudo:     "' + String(v) + '"');
+    }
+    p('');
+
+    // --- Caso 2: la columna forzada a texto plano ANTES de escribir ---
+    truncarSandbox_();
+    hoja.getRange(2, colFecha, 50, 1).setNumberFormat('@');
+    insertarFilas_('Gastos', [{
+      id: 'diag0002', fecha: '2026-01-01', descripcion: 'diag', categoria_id: 'x',
+      medio_pago_id: 'y', monto: 1, moneda: 'ARS', compra_credito_id: '',
+      nro_cuota: '', creado_en: ahoraISO_()
+    }]);
+    var v2 = hoja.getRange(2, colFecha).getValue();
+
+    p('--- Caso 2: misma escritura con la columna en formato texto ("@") ---');
+    p('typeof:          ' + (typeof v2));
+    p('es Date:         ' + (Object.prototype.toString.call(v2) === '[object Date]'));
+    p('valor crudo:     "' + String(v2) + '"');
+    p('=> fechaISO_ devuelve:     ' + fechaISO_(v2));
+    p('');
+
+    // --- Caso 3: escribir un Date de verdad, no un texto ---
+    truncarSandbox_();
+    hoja.getRange(2, colFecha, 50, 1).setNumberFormat('yyyy-mm-dd');
+    hoja.getRange(2, 1, 1, SCHEMA.Gastos.length).setValues([[
+      'diag0003', new Date(2026, 0, 1), 'diag', 'x', 'y', 1, 'ARS', '', '', ahoraISO_()
+    ]]);
+    SpreadsheetApp.flush();
+    var v3 = hoja.getRange(2, colFecha).getValue();
+
+    p('--- Caso 3: setValues con un objeto Date (new Date(2026, 0, 1)) ---');
+    p('es Date:         ' + (Object.prototype.toString.call(v3) === '[object Date]'));
+    if (Object.prototype.toString.call(v3) === '[object Date]') {
+      p('toISOString:     ' + v3.toISOString());
+      p('formatDate UTC:            ' + Utilities.formatDate(v3, 'UTC', 'yyyy-MM-dd HH:mm'));
+      p('formatDate script tz:      ' + Utilities.formatDate(v3, tzScript, 'yyyy-MM-dd HH:mm'));
+      p('formatDate spreadsheet tz: ' + Utilities.formatDate(v3, tzSheet, 'yyyy-MM-dd HH:mm'));
+    }
+
+    truncarSandbox_();
+    var salida = out.join('\n');
+    Logger.log(salida);
+    return salida;
+  });
+}
+
+/**
+ * SOLO LECTURA sobre la copia de trabajo. No escribe absolutamente nada: no
+ * llama a insertarFilas_/actualizarFila_/borrarFila_ ni a setValues.
+ *
+ * Responde una sola pregunta: ¿la copia de trabajo guarda las fechas como
+ * TEXTO o como Date? Si es texto, `fechaISO_` nunca entró en la rama de Date y
+ * el bug de la timezone jamás afectó a la app en producción. Si es Date, las
+ * fechas se venían mostrando corridas un día y el fix de It 4b las corrige.
+ */
+function diagnosticoFechasProduccion() {
+  var ss = SpreadsheetApp.openById(getSheetId_());
+  var out = [];
+  var p = function (s) { out.push(s); };
+
+  p('═══ Fechas en la COPIA DE TRABAJO (solo lectura) ═══');
+  p('Script TZ:      ' + Session.getScriptTimeZone());
+  p('Spreadsheet TZ: ' + ss.getSpreadsheetTimeZone());
+  p('');
+
+  [['Gastos', 'fecha'], ['ComprasCredito', 'fecha_compra']].forEach(function (par) {
+    var nombre = par[0], col = par[1];
+    var hoja = ss.getSheetByName(nombre);
+    if (!hoja) { p(nombre + ': no existe la pestaña.'); return; }
+    var lr = hoja.getLastRow();
+    if (lr < 2) { p(nombre + ': sin filas.'); return; }
+
+    var ci = SCHEMA[nombre].indexOf(col) + 1;
+    var n = Math.min(3, lr - 1);
+    p('--- ' + nombre + '.' + col + ' (primeras ' + n + ' filas) ---');
+    p('numberFormat: ' + hoja.getRange(2, ci).getNumberFormat());
+    var tipos = {};
+    for (var i = 0; i < n; i++) {
+      var celda = hoja.getRange(2 + i, ci);
+      var v = celda.getValue();
+      var esDate = Object.prototype.toString.call(v) === '[object Date]';
+      tipos[esDate ? 'Date' : typeof v] = true;
+      p('  fila ' + (2 + i) + ': ' + (esDate ? 'Date ' + v.toISOString() : '"' + String(v) + '"') +
+        '  | muestra: ' + celda.getDisplayValue() + '  | fechaISO_ → ' + fechaISO_(v));
+    }
+    p('  VEREDICTO: guardadas como ' + Object.keys(tipos).join(' + '));
+    p('');
+  });
+
+  var salida = out.join('\n');
+  Logger.log(salida);
+  return salida;
 }
 
 /* ===================== Utilidades de test ===================== */

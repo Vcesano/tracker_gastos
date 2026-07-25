@@ -195,16 +195,21 @@ function indexar_(headers) {
 /**
  * Fecha ISO yyyy-MM-dd si es Date; si no, el valor tal cual como texto.
  *
- * Se formatea con la timezone de la SPREADSHEET (tzSheet_), no con una fija:
- * es la que Sheets usó para interpretar la celda, así que es la única con la
- * que escribir '2026-07-21' y leerlo de vuelta da '2026-07-21'. Con una tz
- * hardcodeada, una spreadsheet en otra zona corría todas las fechas un día
- * (y de paso rompía en silencio el guard de duplicados de Pago Bulk, que
- * compara compra|fecha). Detectado por los tests de It 4b.
+ * Se formatea en UTC, y no es arbitrario: `diagnosticoFechas()` midió que
+ * getValues() devuelve la celda con su HORA DE PARED ETIQUETADA COMO UTC, sin
+ * intervención de la timezone del script ni de la de la spreadsheet. Una celda
+ * que muestra 2026-01-01 vuelve como 2026-01-01T00:00:00.000Z; otra que muestra
+ * 2025-12-31 19:00 vuelve como 2025-12-31T19:00:00.000Z. Formatear en UTC es
+ * entonces lo único que recupera exactamente lo que la celda muestra, y además
+ * es independiente de ambas timezones.
+ *
+ * Con la tz del proyecto hardcodeada (como estaba), toda fecha guardada como
+ * Date volvía corrida un día — y eso rompía en silencio el guard de duplicados
+ * de Pago Bulk, que compara compra|fecha. Detectado por los tests de It 4b.
  */
 function fechaISO_(v) {
   if (Object.prototype.toString.call(v) === '[object Date]') {
-    return Utilities.formatDate(v, tzSheet_(), 'yyyy-MM-dd');
+    return Utilities.formatDate(v, 'UTC', 'yyyy-MM-dd');
   }
   return String(v);
 }
