@@ -12,7 +12,6 @@
     var editId = null;     // id del gasto en edición; null = alta
     var editEsCuota = false; // el gasto en edición es una cuota (habilita nro_cuota)
     var histActuales = []; // últimos gastos listados (para resolver Editar)
-    var sugerencias = { ultimo: null, recientes: [] }; // It 3e: defaults + chips
 
     var el = {
       tabs: $('tabs'),
@@ -37,8 +36,6 @@
       submit: $('f-submit'),
       limpiar: $('f-limpiar'),
       fDateShortcuts: $('f-date-shortcuts'),
-      fRecientes: $('f-recientes'),
-      fRecientesChips: $('f-recientes-chips'),
       fCuotaBox: $('f-cuota-box'),
       fCuotaInfo: $('f-cuota-info'),
       fNrocuota: $('f-nrocuota'),
@@ -368,56 +365,13 @@
       el.monto.value = ''; el.moneda.value = 'ARS'; el.descripcion.value = '';
     }
 
-    // ---- Sugerencias del form de Cargar (It 3e) ----
+    // Fecha de hace n días en ISO local (para los atajos Hoy/Ayer del form).
     function fechaMenosDias(n) {
       var d = new Date();
       d.setDate(d.getDate() - n);
       var mm = String(d.getMonth() + 1).padStart(2, '0');
       var dd = String(d.getDate()).padStart(2, '0');
       return d.getFullYear() + '-' + mm + '-' + dd;
-    }
-
-    // Aplica un combo categoría+medio al form (usa la cascada existente). Los que
-    // no resuelvan (maestro inactivo) se ignoran sin romper.
-    function aplicarCombo(categoriaId, medioId) {
-      if (categoriaId) setCascadaCategoria(categoriaId);
-      if (medioId) setCascadaMedio(medioId);
-    }
-
-    function renderRecientesChips() {
-      var chips = sugerencias.recientes || [];
-      if (editId || !chips.length) { el.fRecientes.hidden = true; el.fRecientesChips.innerHTML = ''; return; }
-      el.fRecientesChips.innerHTML = '';
-      chips.forEach(function (r) {
-        var b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'chip';
-        b.textContent = r.categoria_label + ' · ' + r.medio_label;
-        b.addEventListener('click', function () { aplicarCombo(r.categoria_id, r.medio_pago_id); });
-        el.fRecientesChips.appendChild(b);
-      });
-      el.fRecientes.hidden = false;
-    }
-
-    // Prellena con el último usado, solo si estamos en alta y el usuario todavía
-    // no eligió categoría ni medio (no le pisamos lo que empezó a cargar).
-    function aplicarSugerenciaInicial() {
-      if (editId || el.subcategoria.value || el.medio.value) return;
-      if (sugerencias.ultimo) aplicarCombo(sugerencias.ultimo.categoria_id, sugerencias.ultimo.medio_pago_id);
-    }
-
-    // Trae las sugerencias en segundo plano al arrancar; al llegar, pinta chips y
-    // aplica el default si el form sigue vacío.
-    function cargarSugerencias() {
-      google.script.run
-        .withSuccessHandler(function (res) {
-          if (!res || !res.ok) return;
-          sugerencias = res.data || { ultimo: null, recientes: [] };
-          renderRecientesChips();
-          aplicarSugerenciaInicial();
-        })
-        .withFailureHandler(function () {})
-        .getSugerencias();
     }
 
     function enterCreateMode() {
@@ -428,8 +382,6 @@
       el.editBanner.hidden = true;
       el.fCuotaBox.hidden = true;
       resetFormFields();
-      renderRecientesChips();
-      aplicarSugerenciaInicial();
     }
 
     function enterEditMode(g) {
@@ -438,7 +390,6 @@
       el.formTitle.textContent = 'Editar gasto';
       el.submit.textContent = 'Guardar cambios';
       el.editBanner.hidden = false;
-      el.fRecientes.hidden = true;   // los chips son solo para altas
       el.fecha.value = g.fecha;   // ya viene ISO yyyy-mm-dd desde el server
       if (!setCascadaCategoria(g.categoria_id)) {
         fillSelect(el.tipo, optTipos, 'Elegí tipo…');
@@ -744,7 +695,6 @@
               el.submit.textContent = 'Guardar gasto';
               el.monto.value = ''; el.descripcion.value = '';
               el.monto.focus();
-              cargarSugerencias();   // refrescar último/recientes en background
             }
           } else {
             el.submit.textContent = editando ? 'Guardar cambios' : 'Guardar gasto';
@@ -1938,6 +1888,5 @@
     }
 
     cargarCatalogos();
-    cargarSugerencias();
   })();
 </script>
