@@ -184,6 +184,37 @@
       return (moneda ? moneda + ' ' : '') + s;
     }
 
+    /**
+     * Filtro por texto, client-side (It 4c: extraído de las 3 copias que había
+     * en Historial, Compras y Pendientes). Busca `q` en la concatenación de los
+     * `campos` de cada ítem, sin distinguir mayúsculas. Sin `q`, devuelve la
+     * lista tal cual (misma referencia, no una copia).
+     */
+    function filtrarPorTexto(lista, q, campos) {
+      q = String(q || '').trim().toLowerCase();
+      if (!q) return lista;
+      return lista.filter(function (item) {
+        var hay = campos.map(function (c) { return item[c] || ''; }).join(' ');
+        return hay.toLowerCase().indexOf(q) >= 0;
+      });
+    }
+
+    /**
+     * Agrupa gastos por día conservando el orden de llegada (el server ya los
+     * manda desc por fecha). Devuelve [{ fecha, items, totales:{moneda:monto} }].
+     * Los totales van por moneda: NUNCA se suman monedas distintas.
+     */
+    function agruparPorDia(gastos) {
+      var grupos = {}, orden = [];
+      gastos.forEach(function (g) {
+        var k = String(g.fecha).slice(0, 10);
+        if (!grupos[k]) { grupos[k] = { fecha: k, items: [], totales: {} }; orden.push(k); }
+        grupos[k].items.push(g);
+        grupos[k].totales[g.moneda] = (grupos[k].totales[g.moneda] || 0) + g.monto;
+      });
+      return orden.map(function (k) { return grupos[k]; });
+    }
+
     // En muchos navegadores el calendario de un input date solo se abre desde el
     // ícono. showPicker() lo abre al tocar cualquier parte del box.
     function attachPicker(input) {
@@ -544,13 +575,8 @@
     // no dispara un viaje por tecla ni ensucia la clave de cache (que depende de
     // los filtros del server). Busca en descripción, categoría, medio y tarjeta.
     function gastosFiltradosTexto() {
-      var q = (el.hBuscar.value || '').trim().toLowerCase();
-      if (!q) return histActuales;
-      return histActuales.filter(function (g) {
-        var hay = (g.descripcion || '') + ' ' + (g.categoria_label || '') + ' ' +
-                  (g.medio_label || '') + ' ' + (g.tarjeta_label || '');
-        return hay.toLowerCase().indexOf(q) >= 0;
-      });
+      return filtrarPorTexto(histActuales, el.hBuscar.value,
+        ['descripcion', 'categoria_label', 'medio_label', 'tarjeta_label']);
     }
     function pintarHistorial() { renderHistorial(gastosFiltradosTexto()); }
 
@@ -639,19 +665,8 @@
       el.histResumen.textContent = gastos.length + (gastos.length === 1 ? ' gasto' : ' gastos');
       if (!gastos.length) { el.histList.innerHTML = '<p class="muted">No hay gastos con esos filtros.</p>'; return; }
 
-      // Agrupar por día (los gastos ya vienen desc por fecha del server). Total
-      // del día por moneda; nunca se suman monedas distintas.
-      var groups = {}, order = [];
-      gastos.forEach(function (g) {
-        var k = String(g.fecha).slice(0, 10);
-        if (!groups[k]) { groups[k] = { fecha: k, items: [], totales: {} }; order.push(k); }
-        groups[k].items.push(g);
-        groups[k].totales[g.moneda] = (groups[k].totales[g.moneda] || 0) + g.monto;
-      });
-
       var frag = document.createDocumentFragment();
-      order.forEach(function (k) {
-        var grp = groups[k];
+      agruparPorDia(gastos).forEach(function (grp) {
         var box = document.createElement('div');
         box.className = 'hgroup';
 
@@ -1255,12 +1270,8 @@
 
     // Búsqueda por texto en Compras (client-side, sobre lo ya traído).
     function comprasFiltradas() {
-      var q = (el.cBuscar.value || '').trim().toLowerCase();
-      if (!q) return compras;
-      return compras.filter(function (c) {
-        var hay = (c.descripcion || '') + ' ' + (c.tarjeta_label || '') + ' ' + (c.categoria_label || '');
-        return hay.toLowerCase().indexOf(q) >= 0;
-      });
+      return filtrarPorTexto(compras, el.cBuscar.value,
+        ['descripcion', 'tarjeta_label', 'categoria_label']);
     }
     function actualizarLimpiarCompras() {
       el.cLimpiar.disabled = !(el.cBuscar.value || el.cFiltroTarjeta.value || el.cFiltroEstado.value !== 'pendientes');
@@ -1322,11 +1333,8 @@
     // Búsqueda por texto en Pendientes (client-side, antes de agrupar).
     function pintarPendientes() {
       actualizarLimpiarPendientes();
-      var q = (el.pBuscar.value || '').trim().toLowerCase();
-      var lista = !q ? pendientesActuales : pendientesActuales.filter(function (c) {
-        return ((c.descripcion || '') + ' ' + (c.tarjeta_label || '')).toLowerCase().indexOf(q) >= 0;
-      });
-      renderPendientes(lista);
+      renderPendientes(filtrarPorTexto(pendientesActuales, el.pBuscar.value,
+        ['descripcion', 'tarjeta_label']));
     }
 
     function switchCredSub(sub) {
@@ -1973,6 +1981,27 @@
         navegarTab(v);
       });
     }
+
+    // Superficie de test (It 4c). Solo funciones PURAS: no leen el DOM ni el
+    // estado de la app, así que se pueden ejercitar desde la consola sin
+    // ensuciar nada. Se verifican con tests/client-tests.js (fuera de /src, no
+    // se pushea con clasp): se pega en la consola del navegador sobre la app
+    // real. Es exposición de lo que ya existe, no código duplicado para tests.
+    window.__TEST__ = {
+      formatMonto: formatMonto,
+      parseMonto: parseMonto,
+      montoAInput: montoAInput,
+      fmtFecha: fmtFecha,
+      fmtFechaLarga: fmtFechaLarga,
+      fmtMoneda: fmtMoneda,
+      hoyISO: hoyISO,
+      fechaMenosDias: fechaMenosDias,
+      distinct: distinct,
+      findById: findById,
+      escapeHtml: escapeHtml,
+      filtrarPorTexto: filtrarPorTexto,
+      agruparPorDia: agruparPorDia
+    };
 
     cargarCatalogos();
   })();
