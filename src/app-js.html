@@ -408,6 +408,7 @@
       var abierto = !el.hFiltros.hidden;
       el.hToggle.textContent = (abierto ? '▲ Filtros' : '▼ Filtros') + (n ? ' (' + n + ')' : '');
       el.hToggle.classList.toggle('has-filtros', n > 0);
+      el.hLimpiar.disabled = (n === 0);   // sin filtros, no hay nada que limpiar
     }
 
     function cargarHistorial() {
