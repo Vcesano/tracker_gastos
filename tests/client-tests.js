@@ -4,7 +4,13 @@
  * CÓMO SE CORRE
  *   1. Abrí la app en la PC (Chrome/Edge) y esperá a que cargue.
  *   2. F12 → pestaña Console.
- *   3. Pegá TODO este archivo y Enter.
+ *   3. ⚠ IMPORTANTE: cambiá el CONTEXTO de la consola. Apps Script sirve la app
+ *      adentro de un iframe sandboxeado, y la consola arranca apuntando al
+ *      frame de afuera (script.google.com), donde la app no existe. Arriba a la
+ *      izquierda de la consola hay un desplegable que dice "top": abrilo y
+ *      elegí la entrada del iframe ("userHtmlFrame", o una URL de
+ *      googleusercontent.com).
+ *   4. Recién ahí pegá TODO este archivo y Enter.
  *
  * Imprime PASS/FAIL por caso y un resumen final. No toca la Sheet, no dispara
  * ningún google.script.run y no modifica el estado de la app: solo ejercita las
@@ -18,8 +24,19 @@
 
   var T = window.__TEST__;
   if (!T) {
-    console.error('✗ No existe window.__TEST__. ¿Estás en la app y ya terminó de cargar? ' +
-                  '(necesita el deploy @28 o posterior)');
+    // Causa nº 1 por lejos: la consola está apuntando al frame de afuera.
+    // Apps Script mete la app en un iframe sandboxeado de otro origen, así que
+    // desde "top" no hay forma de alcanzarla (ni leyendo frames[]).
+    var esTop = (window.top === window.self);
+    console.error('✗ No existe window.__TEST__.');
+    if (esTop) {
+      console.error('   Estás en el frame de AFUERA (' + location.host + '), donde la app no vive.');
+      console.error('   → Arriba a la izquierda de la consola hay un desplegable que dice "top".');
+      console.error('     Abrilo, elegí "userHtmlFrame" (o la URL de googleusercontent.com) y pegá esto de nuevo.');
+    } else {
+      console.error('   Estás en el frame correcto, así que probablemente sea el HTML viejo en cache:');
+      console.error('   → recargá con Ctrl+Shift+R (necesita el deploy @28 o posterior).');
+    }
     return;
   }
 
