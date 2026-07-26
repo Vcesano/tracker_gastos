@@ -36,7 +36,16 @@
     --warn-soft: rgba(232, 163, 61, 0.15);
 
     --ok: #57cc99;
-    --err: #e5534b;
+
+    /* Dos rojos, porque el rojo se usa de dos formas opuestas y una sola tinta
+       no puede pasar contraste en ambas (verificado en It 4e):
+         --err       fondo de botón destructivo, con texto BLANCO encima
+                     (#e5534b daba 3.70 con blanco; ahora 4.77)
+         --err-text  texto rojo sobre tarjeta oscura
+                     (#e5534b daba 4.00 sobre --card; ahora 5.40)
+       Aclarar el rojo arregla el texto pero empeora el botón, y viceversa. */
+    --err: #d13c33;
+    --err-text: #f2776e;
     --err-soft: rgba(229, 83, 75, 0.14);
     --radius: 14px;
     --pad: 16px;
@@ -96,7 +105,7 @@
 
   .muted { color: var(--muted); font-size: 0.85rem; }
   .ok { color: var(--ok); }
-  .err { color: var(--err); }
+  .err { color: var(--err-text); }
 
   /* --- Tabs --- */
   .tabs {
@@ -154,6 +163,23 @@
     outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 2px var(--accent-soft);
+  }
+
+  /* --- Foco visible con teclado (It 4e) ---
+     Solo :focus-visible: el navegador NO lo dispara al tocar con el dedo ni al
+     clickear, así que el anillo aparece cuando navegás con Tab y no ensucia el
+     uso normal en el celu. Antes .btn/.tab/.subtab/.icon-btn/.chip no tenían
+     ningún indicador: con teclado no se sabía dónde estabas parado. */
+  :focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+  }
+  /* Los campos ya resaltan su borde al enfocarse: el anillo va pegado, sin
+     separación, para no duplicar el efecto. Va después del reset de arriba
+     (misma especificidad) para poder devolverle el outline. */
+  input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 0;
   }
   select:disabled { opacity: 0.5; }
   ::placeholder { color: var(--muted); opacity: 0.7; }
@@ -275,6 +301,9 @@
   }
 
   .link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;          /* medía ~21px: por debajo del mínimo AA (It 4e) */
     background: none;
     border: none;
     color: var(--accent);
@@ -360,16 +389,23 @@
     vertical-align: middle;
   }
   .gasto-acciones { display: flex; gap: 10px; }
+  /* Editar / Borrar del Historial: son los botones que más se tocan con el
+     pulgar. Medían ~24px de alto (el mínimo justo de WCAG 2.2 AA). Se llevan a
+     36px con inline-flex, que agranda la fila unos 12px y no rompe el diseño
+     (los 44px de AAA obligarían a rediseñar la fila). It 4e. */
   .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    min-height: 36px;
     background: none;
     border: none;
     color: var(--muted);
     font-size: 0.85rem;
     cursor: pointer;
-    padding: 4px;
+    padding: 6px 8px;
   }
   .icon-btn:hover { color: var(--text); }
-  .icon-btn.danger { color: var(--err); }   /* eliminar / borrar: irreversible */
+  .icon-btn.danger { color: var(--err-text); }   /* eliminar / borrar: irreversible */
   .icon-btn.warn { color: var(--warn); }    /* desactivar: reversible */
   .icon-btn.ok { color: var(--ok); }
 
@@ -449,7 +485,7 @@
   .rrow .field { margin-bottom: 8px; }
   .rrow-suelto-del {
     margin-left: auto;
-    color: var(--err);
+    color: var(--err-text);
     background: none;
     border: none;
     font-size: 0.85rem;

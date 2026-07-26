@@ -12,16 +12,19 @@
         <button type="button" id="btn-refresh" class="link" title="Actualizar datos" hidden><span class="spin-ico">↻</span> Actualizar</button>
       </header>
 
-      <nav class="tabs" id="tabs" hidden>
-        <button type="button" class="tab active" data-view="form">Cargar</button>
-        <button type="button" class="tab" data-view="historial">Historial</button>
-        <button type="button" class="tab" data-view="credito">Crédito</button>
-        <button type="button" class="tab" data-view="resumen">Pago Bulk</button>
-        <button type="button" class="tab" data-view="maestros">Maestros</button>
+      <!-- Patrón ARIA de tablist (It 4e): el lector anuncia "pestaña 2 de 5,
+           seleccionada", y las flechas ← → navegan entre pestañas. El roving
+           tabindex lo maneja showView(). -->
+      <nav class="tabs" id="tabs" role="tablist" aria-label="Secciones" hidden>
+        <button type="button" class="tab active" id="tab-form" role="tab" aria-selected="true" aria-controls="form-card" data-view="form">Cargar</button>
+        <button type="button" class="tab" id="tab-historial" role="tab" aria-selected="false" aria-controls="historial-card" tabindex="-1" data-view="historial">Historial</button>
+        <button type="button" class="tab" id="tab-credito" role="tab" aria-selected="false" aria-controls="credito-card" tabindex="-1" data-view="credito">Crédito</button>
+        <button type="button" class="tab" id="tab-resumen" role="tab" aria-selected="false" aria-controls="resumen-card" tabindex="-1" data-view="resumen">Pago Bulk</button>
+        <button type="button" class="tab" id="tab-maestros" role="tab" aria-selected="false" aria-controls="maestros-card" tabindex="-1" data-view="maestros">Maestros</button>
       </nav>
 
       <!-- ===== Vista: Cargar / Editar ===== -->
-      <section class="card view" id="form-card" data-view="form" hidden>
+      <section class="card view" id="form-card" role="tabpanel" aria-labelledby="tab-form" data-view="form" hidden>
         <div class="edit-banner" id="edit-banner" hidden>
           <span>Editando un gasto</span>
           <button type="button" id="edit-cancel" class="link">Cancelar</button>
@@ -96,7 +99,7 @@
       </section>
 
       <!-- ===== Vista: Historial ===== -->
-      <section class="card view" id="historial-card" data-view="historial" hidden>
+      <section class="card view" id="historial-card" role="tabpanel" aria-labelledby="tab-historial" data-view="historial" hidden>
         <div class="hist-head">
           <h2 class="card-title">Historial</h2>
           <div class="hist-acciones">
@@ -155,14 +158,14 @@
       </section>
 
       <!-- ===== Vista: Crédito (compras en cuotas) ===== -->
-      <section class="card view" id="credito-card" data-view="credito" hidden>
+      <section class="card view" id="credito-card" role="tabpanel" aria-labelledby="tab-credito" data-view="credito" hidden>
         <h2 class="card-title">Crédito</h2>
-        <div class="subtabs">
-          <button type="button" class="subtab active" data-credsub="compras">Compras</button>
-          <button type="button" class="subtab" data-credsub="pendientes">Pendientes</button>
+        <div class="subtabs" role="tablist" aria-label="Vistas de crédito">
+          <button type="button" class="subtab active" id="subtab-compras" role="tab" aria-selected="true" aria-controls="cred-compras" data-credsub="compras">Compras</button>
+          <button type="button" class="subtab" id="subtab-pendientes" role="tab" aria-selected="false" aria-controls="cred-pendientes" tabindex="-1" data-credsub="pendientes">Pendientes</button>
         </div>
 
-        <div id="cred-compras">
+        <div id="cred-compras" role="tabpanel" aria-labelledby="subtab-compras">
         <div class="editor" id="c-editor" hidden>
           <h3 class="editor-title" id="c-editor-title">Nueva compra</h3>
 
@@ -252,7 +255,7 @@
         <div id="c-list"></div>
         </div><!-- /cred-compras -->
 
-        <div id="cred-pendientes" hidden>
+        <div id="cred-pendientes" role="tabpanel" aria-labelledby="subtab-pendientes" hidden>
           <div class="filtros-row">
             <label class="field">
               <span>Buscar</span>
@@ -274,7 +277,7 @@
       </section>
 
       <!-- ===== Vista: Resumen de tarjeta (batch) ===== -->
-      <section class="card view" id="resumen-card" data-view="resumen" hidden>
+      <section class="card view" id="resumen-card" role="tabpanel" aria-labelledby="tab-resumen" data-view="resumen" hidden>
         <h2 class="card-title">Cargar resumen de tarjeta</h2>
 
         <div id="r-config">
@@ -306,11 +309,11 @@
       </section>
 
       <!-- ===== Vista: Maestros (ABM) ===== -->
-      <section class="card view" id="maestros-card" data-view="maestros" hidden>
+      <section class="card view" id="maestros-card" role="tabpanel" aria-labelledby="tab-maestros" data-view="maestros" hidden>
         <h2 class="card-title">Maestros</h2>
-        <div class="subtabs">
-          <button type="button" class="subtab active" data-master="categorias">Categorías</button>
-          <button type="button" class="subtab" data-master="medios">Medios de pago</button>
+        <div class="subtabs" role="tablist" aria-label="Maestros">
+          <button type="button" class="subtab active" id="subtab-categorias" role="tab" aria-selected="true" aria-controls="m-list" data-master="categorias">Categorías</button>
+          <button type="button" class="subtab" id="subtab-medios" role="tab" aria-selected="false" aria-controls="m-list" tabindex="-1" data-master="medios">Medios de pago</button>
         </div>
 
         <div class="editor" id="m-editor" hidden>

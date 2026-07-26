@@ -237,11 +237,16 @@
 
     // Select de filtro: primera opción "todos" (value ''). `ordenar`=false mantiene
     // el orden dado. Preserva la selección actual si sigue existiendo.
-    function fillFiltro(sel, opciones, labelTodos, ordenar) {
+    // `phDeshabilitado`: para los selects OBLIGATORIOS que reusan este helper
+    // (tarjeta y cuenta de Pago Bulk), donde la primera opción no es un "Todos"
+    // válido sino un placeholder — dejarlo elegible permitía volver a "sin
+    // elegir" en un campo requerido (It 4e).
+    function fillFiltro(sel, opciones, labelTodos, ordenar, phDeshabilitado) {
       var keep = sel.value;
       sel.innerHTML = '';
       var all = document.createElement('option');
       all.value = ''; all.textContent = labelTodos;
+      if (phDeshabilitado) { all.disabled = true; all.selected = true; }
       sel.appendChild(all);
       var lista = ordenar === false ? opciones : opciones.slice().sort(byLabel);
       lista.forEach(function (o) {
@@ -516,14 +521,50 @@
 
     // ---- Navegación ----
     var viewActual = 'form';
+    /**
+     * Marca un botón de pestaña como seleccionado o no (It 4e). Además de la
+     * clase visual, mantiene `aria-selected` (lo que anuncia el lector de
+     * pantalla) y el *roving tabindex*: dentro de un tablist solo el tab activo
+     * es tabulable, y entre tabs se navega con las flechas. Si todos fueran
+     * tabulables, Tab tendría que pasar por las 5 pestañas para llegar al
+     * contenido.
+     */
+    function marcarTab(btn, activo) {
+      btn.classList.toggle('active', activo);
+      btn.setAttribute('aria-selected', activo ? 'true' : 'false');
+      btn.tabIndex = activo ? 0 : -1;
+    }
+
     function showView(v) {
       viewActual = v;
       var secs = document.querySelectorAll('.view');
       for (var i = 0; i < secs.length; i++) secs[i].hidden = secs[i].getAttribute('data-view') !== v;
       var tabs = document.querySelectorAll('.tab');
       for (var j = 0; j < tabs.length; j++) {
-        tabs[j].classList.toggle('active', tabs[j].getAttribute('data-view') === v);
+        marcarTab(tabs[j], tabs[j].getAttribute('data-view') === v);
       }
+    }
+
+    /**
+     * Flechas ← → (y Inicio/Fin) para moverse dentro de un tablist, como manda
+     * el patrón ARIA. Mueve el foco y activa: las pestañas de la app no tienen
+     * costo de activación (todo sale del cache o de una precarga).
+     */
+    function activarTeclasTablist(lista) {
+      lista.addEventListener('keydown', function (ev) {
+        var k = ev.key;
+        if (k !== 'ArrowRight' && k !== 'ArrowLeft' && k !== 'Home' && k !== 'End') return;
+        var tabs = [].slice.call(lista.querySelectorAll('[role="tab"]'));
+        var i = tabs.indexOf(document.activeElement);
+        if (i < 0) return;
+        ev.preventDefault();
+        var next = k === 'Home' ? 0
+                 : k === 'End' ? tabs.length - 1
+                 : k === 'ArrowRight' ? (i + 1) % tabs.length
+                 : (i - 1 + tabs.length) % tabs.length;
+        tabs[next].focus();
+        tabs[next].click();
+      });
     }
 
     // ---- Historial ----
@@ -1093,7 +1134,7 @@
       // Solo los subtabs de Maestros: si no, esto le sacaba el `active` a los
       // de Crédito cada vez que se entraba acá (It 4a).
       var subs = document.querySelectorAll('.subtab[data-master]');
-      for (var i = 0; i < subs.length; i++) subs[i].classList.toggle('active', subs[i].getAttribute('data-master') === m);
+      for (var i = 0; i < subs.length; i++) marcarTab(subs[i], subs[i].getAttribute('data-master') === m);
       // Los filtros de categoría/subcategoría solo aplican a Categorías.
       var esCat = m === 'categorias';
       el.mFcWrap.hidden = !esCat;
@@ -1369,7 +1410,7 @@
       credSubActual = sub;
       var btns = document.querySelectorAll('.subtab[data-credsub]');
       for (var i = 0; i < btns.length; i++) {
-        btns[i].classList.toggle('active', btns[i].getAttribute('data-credsub') === sub);
+        marcarTab(btns[i], btns[i].getAttribute('data-credsub') === sub);
       }
       var esComp = sub === 'compras';
       el.credCompras.hidden = !esComp;
@@ -1792,10 +1833,10 @@
 
       // Selects del resumen de tarjeta: tarjeta (crédito) y cuenta que paga
       // (medios NO crédito). fillFiltro preserva la selección en un refresh.
-      fillFiltro(el.rTarjeta, tarjFiltro, 'Elegí tarjeta…', true);
+      fillFiltro(el.rTarjeta, tarjFiltro, 'Elegí tarjeta…', true, true);
       var medioPago = medios.filter(function (m) { return m.tipo_medio !== 'Credito'; })
         .map(function (m) { return { value: m.id, label: m.entidad }; });
-      fillFiltro(el.rMedio, medioPago, 'Elegí medio…', true);
+      fillFiltro(el.rMedio, medioPago, 'Elegí medio…', true, true);
     }
 
     // Re-lee catálogos en caliente (tras un cambio de ABM o al tocar Actualizar)
@@ -1974,6 +2015,10 @@
     });
     el.rAddSuelto.addEventListener('click', agregarFilaSuelto);
     el.rConfirmar.addEventListener('click', confirmarResumenClick);
+
+    // Flechas dentro de cada tablist (pestañas principales + los 2 grupos de subtabs).
+    var listas = document.querySelectorAll('[role="tablist"]');
+    for (var tl = 0; tl < listas.length; tl++) activarTeclasTablist(listas[tl]);
 
     attachPicker(el.fecha);
     attachPicker(el.hDesde);
