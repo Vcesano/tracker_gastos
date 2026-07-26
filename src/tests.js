@@ -1053,9 +1053,9 @@ function medirPerf(opts) {
     }
 
     p('');
-    p('Nota: los tiempos son del server solo. El viaje google.script.run agrega');
-    p('~0,5-1 s por llamada, y el render del DOM se mide aparte en el cliente');
-    p('con __PERF__.on() / __PERF__.tabla().');
+    p('Nota: estos tiempos son del SERVER solo. Medido en el cliente (It 4d), el');
+    p('viaje google.script.run agrega ~2-2,6 s por llamada — más que el trabajo');
+    p('del server. El render del DOM es despreciable (22 ms para 361 gastos).');
 
     truncarSandbox_();
     return out.join('\n');
