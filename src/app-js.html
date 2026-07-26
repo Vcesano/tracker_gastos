@@ -1832,16 +1832,32 @@
       el.tabs.hidden = false;
       el.btnRefresh.hidden = false;
       showView('form');
-      precargarHistorial();
+      precargarVistas();
     }
 
-    // El historial es la vista a la que más se entra: la traemos en segundo
-    // plano apenas arranca la app, así el primer clic ya la encuentra cacheada.
-    // Es literalmente cargarHistorial(): el contenedor todavía está oculto, y
-    // desde It 4a el guard de pedidos en vuelo evita que entrar al Historial
-    // mientras esto viaja dispare una segunda llamada idéntica.
-    function precargarHistorial() {
+    /**
+     * Precalienta las vistas en segundo plano apenas arranca la app.
+     *
+     * Por qué (It 4d): cada viaje a google.script.run cuesta ~2-2,6 s, y de eso
+     * solo ~0,3-1 s es trabajo del server — el resto es transporte. Optimizar el
+     * server no mueve la aguja; hacer menos viajes SÍ. Trayendo estas vistas
+     * mientras el usuario mira el form de Cargar, el primer clic en cada pestaña
+     * las encuentra cacheadas y el cambio se siente instantáneo.
+     *
+     * Son llamadas a los mismos cargar*() de siempre: los contenedores están
+     * ocultos, y desde It 4a el guard de pedidos en vuelo evita que entrar a una
+     * pestaña mientras su precarga viaja dispare una segunda llamada idéntica.
+     *
+     * El Historial va primero y solo (es el destino más probable); las otras dos
+     * salen después de un respiro para no competir con él durante el primer
+     * pintado.
+     */
+    function precargarVistas() {
       cargarHistorial();
+      setTimeout(function () {
+        cargarCompras();
+        cargarMaestros();
+      }, 600);
     }
 
     function cargarCatalogos() {
