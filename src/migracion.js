@@ -410,10 +410,48 @@ function migrar() {
       });
     });
 
+    // ---------- Backfill de categoría faltante (It 4f) ----------
+    // La corrida de It 1 dejó 67 gastos con categoria_id VACÍO, y la validación
+    // no los vio porque solo miraba las FKs *con* valor (`if (legacyCat && ...)`).
+    // No es corrupción: son filas de AppSheet que nunca tuvieron el vínculo.
+    // Para el cutover se reconstruye con una cascada que NO inventa nada:
+    //   1) la FK legacy, si está y mapea (camino normal);
+    //   2) si es cuota → la categoría de su compra (es la regla del modelo:
+    //      las cuotas heredan la categoría de la compra);
+    //   3) el texto Tipo_de_Gasto + Categoria del propio legacy, si resuelve a
+    //      UNA sola categoría (esas columnas se descartaban por duplicar la FK);
+    //   4) si nada de eso alcanza, queda vacío y se lista en el reporte.
+    var compraCatMap = {};                                   // compra id → categoria_id
+    comprasOut.forEach(function (row) { compraCatMap[String(row[0])] = String(row[4] || ''); });
+
+    // Índice tipo|categoria → ids de categoría (puede haber varias subcategorías).
+    var normTxt = function (s) { return String(s == null ? '' : s).trim().toLowerCase(); };
+    var catsPorTexto = {};
+    catsOut.forEach(function (row) {
+      var clave = normTxt(row[1]) + '|' + normTxt(row[2]);
+      (catsPorTexto[clave] || (catsPorTexto[clave] = [])).push({ id: row[0], sub: String(row[3] || '').trim() });
+    });
+
+    // Las columnas de texto pueden no existir en el legacy: se chequea el índice.
+    var colTipoTxt = g['Tipo_de_Gasto'], colCatTxt = g['Categoria'];
+    var hayTextoLegacy = colTipoTxt !== undefined && colCatTxt !== undefined;
+
+    // Resuelve tipo+categoria a UN id. Si hay varias subcategorías se prefiere
+    // la fila sin subcategoría; si sigue habiendo empate, no se adivina.
+    var resolverPorTexto = function (tipoTxt, catTxt) {
+      if (!hayTextoLegacy) return '';
+      var cands = catsPorTexto[normTxt(tipoTxt) + '|' + normTxt(catTxt)];
+      if (!cands || !cands.length) return '';
+      if (cands.length === 1) return cands[0].id;
+      var sinSub = cands.filter(function (c) { return !c.sub; });
+      return sinSub.length === 1 ? sinSub[0].id : '';
+    };
+
     var gastosOut = [];
     var gastosSalteados = 0;
     var usdGastos = [];
     var orphCat = [], orphMedio = [], orphCompra = [];
+    var catDeCompra = [], catDeTexto = [], catSinResolver = [];
     gastos.rows.forEach(function (r, i) {
       var id = String(r[g['ID']]).trim();
       if (!id) { gastosSalteados++; return; }
@@ -426,6 +464,26 @@ function migrar() {
       var nroCuota = compraId ? (nroCuotaPorFila[i] || '') : '';
       var moneda = detectarUSD_(desc) ? 'USD' : 'ARS';
       if (moneda === 'USD') usdGastos.push(id + ' | ' + desc);
+
+      // Cascada de backfill, solo si quedó sin categoría.
+      if (!categoriaId) {
+        var heredada = compraId ? (compraCatMap[compraId] || '') : '';
+        if (heredada) {
+          categoriaId = heredada;
+          catDeCompra.push(id + ' ← compra ' + compraId);
+        } else {
+          var porTexto = hayTextoLegacy
+            ? resolverPorTexto(r[colTipoTxt], r[colCatTxt]) : '';
+          if (porTexto) {
+            categoriaId = porTexto;
+            catDeTexto.push(id + ' ← "' + String(r[colTipoTxt]) + ' / ' + String(r[colCatTxt]) + '"');
+          } else {
+            catSinResolver.push(id + ' | ' + fechaISO_(r[g['Fecha']]) + ' | ' + desc.slice(0, 40) +
+              (hayTextoLegacy ? ' | texto="' + String(r[colTipoTxt]) + ' / ' + String(r[colCatTxt]) + '"' : ''));
+          }
+        }
+      }
+
       // Validación de fks (reporta el id legacy que no mapeó, no bloquea)
       if (legacyCat && !catMap[legacyCat]) orphCat.push(id + ' → categoria_id(legacy)=' + legacyCat);
       if (legacyMedio && !medioMap[legacyMedio]) orphMedio.push(id + ' → medio_pago_id(legacy)=' + legacyMedio);
@@ -434,6 +492,15 @@ function migrar() {
         id, fechaISO_(r[g['Fecha']]), desc, categoriaId, medioId,
         numero_(r[g['Monto']]), moneda, compraId, nroCuota, ahora
       ]);
+    });
+
+    // FKs VACÍAS: el agujero que escondió los 67 en la corrida de It 1. Se
+    // cuentan aparte de las huérfanas, porque son un problema distinto (falta
+    // el dato, no apunta a algo que no existe).
+    var vacCat = [], vacMedio = [];
+    gastosOut.forEach(function (row) {
+      if (!String(row[3] || '').trim()) vacCat.push(String(row[0]));
+      if (!String(row[4] || '').trim()) vacMedio.push(String(row[0]));
     });
 
     // Validación de fks en ComprasCredito
@@ -467,7 +534,18 @@ function migrar() {
     rep.push('Compras con cuotas_previas > 0 (' + previasList.length + '):');
     previasList.forEach(function (s) { rep.push('  ' + s); });
     rep.push('');
-    rep.push('--- FKs huérfanas (a revisar) ---');
+    rep.push('--- Backfill de categoría faltante (It 4f) ---');
+    rep.push('Columnas de texto en legacy_Gastos: ' + (hayTextoLegacy ? 'SÍ (Tipo_de_Gasto + Categoria)' : 'NO — el paso 3 de la cascada no aplica'));
+    rep.push('Heredada de la compra (es cuota) (' + catDeCompra.length + '): ' + (catDeCompra.join('  |  ') || 'ninguna'));
+    rep.push('Resuelta por texto legacy (' + catDeTexto.length + '): ' + (catDeTexto.join('  |  ') || 'ninguna'));
+    rep.push('SIN RESOLVER — quedan sin categoría (' + catSinResolver.length + '):');
+    catSinResolver.forEach(function (s) { rep.push('  ' + s); });
+    rep.push('');
+    rep.push('--- FKs VACÍAS (falta el dato) ---');
+    rep.push('Gastos.categoria_id vacío (' + vacCat.length + '): ' + (vacCat.join(', ') || 'ninguno'));
+    rep.push('Gastos.medio_pago_id vacío (' + vacMedio.length + '): ' + (vacMedio.join(', ') || 'ninguno'));
+    rep.push('');
+    rep.push('--- FKs huérfanas (apuntan a algo inexistente) ---');
     rep.push('Gastos.categoria_id inexistente (' + orphCat.length + '): ' + (orphCat.join('  |  ') || 'ninguna'));
     rep.push('Gastos.medio_pago_id inexistente (' + orphMedio.length + '): ' + (orphMedio.join('  |  ') || 'ninguna'));
     rep.push('Gastos.compra_credito_id inexistente (' + orphCompra.length + '): ' + (orphCompra.join('  |  ') || 'ninguna'));
