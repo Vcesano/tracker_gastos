@@ -300,6 +300,22 @@
       return true;
     }
 
+    // ---- Medición de performance del cliente (It 4d) ----
+    // APAGADA por defecto: con el flag en false, marcar/medir es un `if` y
+    // nada más, así que no le cuesta nada al uso normal. Se prende desde la
+    // consola con __PERF__.on() y se lee con __PERF__.tabla().
+    var perfOn = false;
+    var perfDatos = [];
+
+    function perfInicio(nombre) {
+      return perfOn ? { nombre: nombre, t0: performance.now() } : null;
+    }
+
+    function perfFin(marca) {
+      if (!marca) return;
+      perfDatos.push({ nombre: marca.nombre, ms: Math.round(performance.now() - marca.t0) });
+    }
+
     // Retrasa la ejecución hasta que dejen de llegar eventos: la búsqueda por
     // texto re-renderizaba todo el DOM en cada tecla.
     function debounce(fn, ms) {
@@ -595,8 +611,10 @@
       }
       var token = pedirZona('historial', key);
       if (!token) return;   // ya viaja un pedido idéntico
+      var marca = perfInicio('listarGastos (ida y vuelta)');
       google.script.run
         .withSuccessHandler(function (res) {
+          perfFin(marca);
           if (!respuestaVigente('historial', token)) return;
           if (!res || !res.ok) {
             if (!hit) el.histResumen.textContent = '✗ ' + ((res && res.error) || 'Error al listar.');
@@ -662,8 +680,13 @@
     }
 
     function renderHistorial(gastos) {
+      var marca = perfInicio('renderHistorial (DOM, ' + gastos.length + ' gastos)');
       el.histResumen.textContent = gastos.length + (gastos.length === 1 ? ' gasto' : ' gastos');
-      if (!gastos.length) { el.histList.innerHTML = '<p class="muted">No hay gastos con esos filtros.</p>'; return; }
+      if (!gastos.length) {
+        el.histList.innerHTML = '<p class="muted">No hay gastos con esos filtros.</p>';
+        perfFin(marca);
+        return;
+      }
 
       var frag = document.createDocumentFragment();
       agruparPorDia(gastos).forEach(function (grp) {
@@ -688,6 +711,7 @@
       });
       el.histList.innerHTML = '';
       el.histList.appendChild(frag);
+      perfFin(marca);
     }
 
     function onHistClick(ev) {
@@ -1041,8 +1065,10 @@
       }
       var token = pedirZona('maestros', 'x');
       if (!token) return;
+      var marca = perfInicio('getMaestros (ida y vuelta)');
       google.script.run
         .withSuccessHandler(function (res) {
+          perfFin(marca);
           if (!respuestaVigente('maestros', token)) return;
           if (!res || !res.ok) {
             if (!hit) el.mResumen.textContent = '✗ ' + ((res && res.error) || 'Error al cargar.');
@@ -1299,8 +1325,10 @@
       }
       var token = pedirZona('compras', key);
       if (!token) return;
+      var marca = perfInicio('listarCompras (ida y vuelta)');
       google.script.run
         .withSuccessHandler(function (res) {
+          perfFin(marca);
           if (!respuestaVigente('compras', token)) return;
           if (!res || !res.ok) {
             if (!hit) el.cResumen.textContent = '✗ ' + ((res && res.error) || 'Error al listar.');
@@ -1431,8 +1459,10 @@
       }
       var token = pedirZona('pendientes', key);
       if (!token) return;
+      var marca = perfInicio('listarCompras pendientes (ida y vuelta)');
       google.script.run
         .withSuccessHandler(function (res) {
+          perfFin(marca);
           if (!respuestaVigente('pendientes', token)) return;
           if (!res || !res.ok) {
             if (!hit) el.pResumen.textContent = '✗ ' + ((res && res.error) || 'Error al listar.');
@@ -2001,6 +2031,40 @@
       escapeHtml: escapeHtml,
       filtrarPorTexto: filtrarPorTexto,
       agruparPorDia: agruparPorDia
+    };
+
+    // Medición de performance del cliente (It 4d). Apagada por defecto.
+    //   __PERF__.on()      → empieza a medir
+    //   (navegá un rato por la app)
+    //   __PERF__.tabla()   → p50 / máx por operación
+    window.__PERF__ = {
+      on: function () {
+        perfOn = true;
+        perfDatos = [];
+        console.log('⏱ Midiendo. Navegá por la app y después llamá a __PERF__.tabla().');
+      },
+      off: function () { perfOn = false; },
+      limpiar: function () { perfDatos = []; },
+      datos: function () { return perfDatos.slice(); },
+      tabla: function () {
+        if (!perfDatos.length) {
+          console.log('Sin mediciones. ¿Llamaste a __PERF__.on() antes de navegar?');
+          return;
+        }
+        var porNombre = {};
+        perfDatos.forEach(function (d) {
+          (porNombre[d.nombre] || (porNombre[d.nombre] = [])).push(d.ms);
+        });
+        var filas = Object.keys(porNombre).map(function (n) {
+          var v = porNombre[n].slice().sort(function (a, b) { return a - b; });
+          return {
+            operacion: n, n: v.length, min: v[0],
+            p50: v[Math.floor(v.length / 2)], max: v[v.length - 1]
+          };
+        });
+        console.table(filas);
+        return filas;
+      }
     };
 
     cargarCatalogos();

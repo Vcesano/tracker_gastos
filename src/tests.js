@@ -999,6 +999,160 @@ function testsEndpoints_() {
   });
 }
 
+/* ===================== Performance (It 4d) ===================== */
+
+/**
+ * Cronometra los endpoints de lectura contra la sandbox, en dos escenarios:
+ * uno realista (≈ el volumen de hoy) y uno de carga (≈ 5.000 gastos), para ver
+ * dónde se empieza a caer `listarGastos` y decidir si el Historial necesita
+ * paginación. Corré `medirPerf()` desde el editor; tarda unos minutos.
+ *
+ * Cada repetición arranca EN FRÍO (se tiran `SS_MEMO_` y `TABLA_MEMO_`), porque
+ * así es como llega cada request real: la memoización de It 3b vive dentro de
+ * una ejecución, no entre ejecuciones. Medir con el memo caliente daría
+ * números lindos y mentirosos.
+ *
+ * `opts` = { repeticiones (3), filas (5000) }.
+ */
+function medirPerf(opts) {
+  opts = opts || {};
+  var reps = opts.repeticiones || 3;
+  var filasCarga = opts.filas === undefined ? 5000 : opts.filas;
+  var REALISTA = 350;   // ≈ lo que hay hoy en la copia de trabajo
+
+  if (!idSandbox_()) throw new Error('Falta la Script Property "TEST_SHEET_ID".');
+
+  var out = [];
+  var p = function (s) { out.push(s); Logger.log(s); };
+
+  return conSandbox_(function () {
+    p('═══ Performance — ' + ahoraISO_() + ' ═══');
+    p('Repeticiones por endpoint: ' + reps + ' (cada una en frío)');
+
+    var ids = sembrarMaestros_();
+    var compraId = resOk_(crearCompra({
+      fecha_compra: '2026-01-15', descripcion: 'Compra de prueba', medio_pago_id: ids.visa,
+      categoria_id: ids.catComida, monto_total: 120000, n_cuotas: 12, moneda: 'ARS'
+    })).id;
+
+    // El rótulo usa el conteo REAL de la tabla, no el pedido: si no se sembró
+    // lo que se creía, se ve en el número y no en una etiqueta optimista.
+    var cuantos = function () { invalidarTabla_('Gastos'); return leerTabla_('Gastos').length; };
+
+    sembrarGastosPerf_(ids, compraId, REALISTA, 0);
+    p('');
+    p(tablaPerf_('Escenario realista (' + cuantos() + ' gastos)', medirEndpoints_(reps, ids)));
+
+    if (filasCarga > REALISTA) {
+      sembrarGastosPerf_(ids, compraId, filasCarga - REALISTA, REALISTA);
+      p('');
+      p(tablaPerf_('Prueba de carga (' + cuantos() + ' gastos)', medirEndpoints_(reps, ids)));
+    } else {
+      p('');
+      p('(Prueba de carga salteada: pediste ' + filasCarga + ' filas, menos que el escenario realista.)');
+    }
+
+    p('');
+    p('Nota: los tiempos son del server solo. El viaje google.script.run agrega');
+    p('~0,5-1 s por llamada, y el render del DOM se mide aparte en el cliente');
+    p('con __PERF__.on() / __PERF__.tabla().');
+
+    truncarSandbox_();
+    return out.join('\n');
+  });
+}
+
+/** Siembra `n` gastos variados (fechas repartidas, 1 de cada 10 es cuota). */
+function sembrarGastosPerf_(ids, compraId, n, desde) {
+  if (n <= 0) return;
+  var pad = function (x) { return x < 10 ? '0' + x : String(x); };
+  var cats = [ids.catComida, ids.catTransporte];
+  var meds = [ids.efectivo, ids.debito];
+  var creado = ahoraISO_();
+  var filas = [];
+  for (var i = 0; i < n; i++) {
+    var k = desde + i;
+    var esCuota = (k % 10 === 0);
+    filas.push({
+      // Ids sintéticos: 8 chars, sin gastar 5.000 llamadas a Utilities.getUuid().
+      id: 'perf' + pad(Math.floor(k / 100) % 100) + pad(k % 100),
+      fecha: '2026-' + pad((k % 12) + 1) + '-' + pad((k % 28) + 1),
+      descripcion: 'Gasto de prueba ' + k,
+      categoria_id: cats[k % cats.length],
+      medio_pago_id: meds[k % meds.length],
+      monto: 1000 + (k % 900),
+      moneda: (k % 20 === 0) ? 'USD' : 'ARS',
+      compra_credito_id: esCuota ? compraId : '',
+      nro_cuota: esCuota ? ((k / 10) % 12) + 1 : '',
+      creado_en: creado
+    });
+  }
+  insertarFilas_('Gastos', filas);   // una sola escritura batch
+}
+
+/** Corre la batería de endpoints y devuelve las mediciones. */
+function medirEndpoints_(reps, ids) {
+  var hoy = '2026-06-01', hasta = '2026-06-30';
+  return [
+    cronometrar_('getCatalogos', reps, function () { getCatalogos(); }),
+    cronometrar_('getMaestros', reps, function () { getMaestros(); }),
+    cronometrar_('listarGastos (sin filtros)', reps, function () { listarGastos({}); }),
+    cronometrar_('listarGastos (rango de 1 mes)', reps, function () { listarGastos({ desde: hoy, hasta: hasta }); }),
+    cronometrar_('listarGastos (solo cuotas)', reps, function () { listarGastos({ cuotas: 'solo' }); }),
+    cronometrar_('listarCompras (todas)', reps, function () { listarCompras({}); }),
+    cronometrar_('listarCompras (pendientes)', reps, function () { listarCompras({ estado: 'pendientes' }); }),
+    cronometrar_('crearGasto (escritura)', reps, function (i) {
+      crearGasto({
+        fecha: '2026-07-20', descripcion: 'perf ' + i, categoria_id: ids.catComida,
+        medio_pago_id: ids.efectivo, monto: 100, moneda: 'ARS'
+      });
+    })
+  ];
+}
+
+/**
+ * Corre `fn` `reps` veces midiendo cada una, siempre en frío. Devuelve
+ * { nombre, n, p50, min, max } en ms.
+ */
+function cronometrar_(nombre, reps, fn) {
+  var tiempos = [];
+  for (var i = 0; i < reps; i++) {
+    SS_MEMO_ = null;                 // como arranca un request real
+    TABLA_MEMO_ = {};
+    var t0 = Date.now();
+    fn(i);
+    tiempos.push(Date.now() - t0);
+  }
+  tiempos.sort(function (a, b) { return a - b; });
+  return {
+    nombre: nombre, n: reps,
+    min: tiempos[0],
+    p50: tiempos[Math.floor(tiempos.length / 2)],
+    max: tiempos[tiempos.length - 1]
+  };
+}
+
+/** Formatea las mediciones como tabla de ancho fijo para el Logger. */
+function tablaPerf_(titulo, mediciones) {
+  var relleno = function (s, n) {
+    s = String(s);
+    while (s.length < n) s += ' ';
+    return s;
+  };
+  var der = function (s, n) {
+    s = String(s);
+    while (s.length < n) s = ' ' + s;
+    return s;
+  };
+  var lineas = ['── ' + titulo + ' ──',
+    relleno('endpoint', 32) + der('min', 8) + der('p50', 8) + der('max', 8)];
+  lineas.push(new Array(57).join('─'));
+  mediciones.forEach(function (m) {
+    lineas.push(relleno(m.nombre, 32) + der(m.min + 'ms', 8) + der(m.p50 + 'ms', 8) + der(m.max + 'ms', 8));
+  });
+  return lineas.join('\n');
+}
+
 /* ===================== Diagnóstico ===================== */
 
 /**
