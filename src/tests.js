@@ -35,6 +35,7 @@ function correrTests() {
   suite_('Validadores (fixtures en memoria)', testsValidadores_);
   suite_('Lecturas derivadas (fixtures en memoria)', testsLecturas_);
   suite_('confirmarResumen — validaciones (fixtures en memoria)', testsConfirmarResumen_);
+  suite_('Robustez de datos (It 4f, fixtures en memoria)', testsRobustez_);
 
   if (!idSandbox_()) {
     log_('');
@@ -46,6 +47,7 @@ function correrTests() {
       conSandbox_(function () {
         suite_('db.js contra la sandbox', testsDb_);
         suite_('Endpoints contra la sandbox', testsEndpoints_);
+        suite_('Robustez contra la sandbox (It 4f)', testsRobustezIntegracion_);
       });
     } catch (e) {
       T_.fail++;
@@ -173,21 +175,40 @@ function fixtures_() {
 /**
  * Corre `fn` con las 4 tablas servidas desde memoria y con `getSheetId_`
  * bloqueado. Restaura todo al salir, incluso si `fn` tira.
+ *
+ * También se neutraliza `conLock_` (It 4f): en producción tira el cache de
+ * lectura para releer fresco adentro del lock, y acá eso borraría los fixtures.
+ * En un unitario los fixtures YA son "el estado fresco", así que alcanza con
+ * correr el cuerpo tal cual, sin lock y sin invalidar nada.
  */
 function conFixtures_(fn) {
-  var memo = TABLA_MEMO_, ss = SS_MEMO_, gs = getSheetId_;
+  var memo = TABLA_MEMO_, ss = SS_MEMO_, gs = getSheetId_, cl = conLock_;
   TABLA_MEMO_ = fixtures_();
   SS_MEMO_ = null;
   getSheetId_ = function () {
     throw new Error('Un test unitario intentó abrir una spreadsheet real (no debería).');
   };
+  conLock_ = function (cuerpo) { return cuerpo(); };
   try {
     return fn();
   } finally {
     TABLA_MEMO_ = memo;
     SS_MEMO_ = ss;
     getSheetId_ = gs;
+    conLock_ = cl;
   }
+}
+
+/**
+ * Igual que `conFixtures_` pero deja retocar las tablas antes de correr `fn`
+ * (`mutar` recibe el objeto de tablas). Para los tests de datos corruptos de
+ * 4f: FKs rotas, montos como texto, `activo` en texto.
+ */
+function conFixturesRotos_(mutar, fn) {
+  return conFixtures_(function () {
+    mutar(TABLA_MEMO_);
+    return fn();
+  });
 }
 
 /* ===================== Capa 1: unitarios ===================== */
@@ -548,6 +569,154 @@ function testsConfirmarResumen_() {
       eq_(d.duplicados.length, 1);
       eq_(d.duplicados[0], 'Heladera');
       ok_(d.insertados === undefined, 'no debería haber insertado nada');
+    });
+  });
+}
+
+/* ============ Capa 1: robustez de datos (It 4f) ============ */
+
+/**
+ * Cubre lo que 4f endurecio: coerciones defensivas ante una Sheet editada a
+ * mano, limites de longitud server-side, ids unicos y el diagnostico.
+ */
+function testsRobustez_() {
+  var largo = function (n) { return new Array(n + 1).join('a'); };
+
+  test_('esActivo_ acepta las formas razonables y rechaza el resto', function () {
+    [true, 1, 'TRUE', 'true', ' Verdadero ', 'SI', 'si', 'X', '1'].forEach(function (v) {
+      ok_(esActivo_(v), 'deberia contar como activo: ' + JSON.stringify(v));
+    });
+    [false, 0, '', '  ', 'FALSE', 'no', 'basura', null, undefined].forEach(function (v) {
+      ok_(!esActivo_(v), 'NO deberia contar como activo: ' + JSON.stringify(v));
+    });
+  });
+
+  test_('numeroSeguro_ parsea texto es-AR y cae al default con basura', function () {
+    eq_(numeroSeguro_(1234.56, 0), 1234.56);
+    eq_(numeroSeguro_('1.234,56', 0), 1234.56);
+    eq_(numeroSeguro_('  980 ', 0), 980);
+    eq_(numeroSeguro_('', 0), 0);
+    eq_(numeroSeguro_('abc', 0), 0);
+    eq_(numeroSeguro_(null, 7), 7);
+    ok_(isFinite(numeroSeguro_(NaN, 0)), 'nunca deberia propagar NaN');
+  });
+
+  test_('textoLimitado_ trimea y corta en el limite exacto', function () {
+    eq_(textoLimitado_('  hola  ', 'descripcion').data, 'hola');
+    ok_(textoLimitado_(largo(140), 'descripcion').ok, '140 tiene que entrar');
+    ok_(!textoLimitado_(largo(141), 'descripcion').ok, '141 tiene que rebotar');
+    ok_(textoLimitado_(largo(999), 'campo_sin_limite').ok, 'sin limite definido no valida nada');
+  });
+
+  test_('los validadores aplican el limite de longitud del server', function () {
+    conFixtures_(function () {
+      resErr_(validarGastoPayload_({
+        fecha: '2026-08-01', monto: 100, moneda: 'ARS', descripcion: largo(141),
+        categoria_id: 'cat00001', medio_pago_id: 'med00001'
+      }), 'máximo 140');
+
+      resErr_(validarCategoria_({ tipo: 'Diario', categoria: largo(61) }), 'máximo 60');
+      resErr_(validarMedio_({ tipo_medio: 'Efectivo', entidad: largo(81) }), 'máximo 80');
+
+      var compra = {
+        fecha_compra: '2026-08-01', monto_total: 1000, n_cuotas: 3, moneda: 'ARS',
+        categoria_id: 'cat00001', medio_pago_id: 'med00003'
+      };
+      resErr_(validarCompraPayload_(merge_(compra, { descripcion: largo(141) })), 'máximo 140');
+      resErr_(validarCompraPayload_(merge_(compra, { nota: largo(141) })), 'máximo 140');
+      resOk_(validarCompraPayload_(merge_(compra, { descripcion: largo(140), nota: largo(140) })));
+    });
+  });
+
+  test_('confirmarResumen valida la longitud de la descripcion de un item', function () {
+    conFixtures_(function () {
+      resErr_(confirmarResumen({
+        fecha: '2026-08-10', medio_pago_id: 'med00002',
+        items: [{ compra_credito_id: 'com00001', categoria_id: 'cat00001', monto: 100, moneda: 'ARS', descripcion: largo(141) }]
+      }), 'máximo 140');
+    });
+  });
+
+  test_('etiquetaRota_ distingue vacio de inexistente', function () {
+    eq_(etiquetaRota_('', 'categoría'), '(sin categoría)');
+    eq_(etiquetaRota_('   ', 'medio'), '(sin medio)');
+    eq_(etiquetaRota_('zzz99999', 'categoría'), '(categoría inexistente: zzz99999)');
+  });
+
+  test_('listarGastos no oculta una FK rota detras del id opaco', function () {
+    conFixturesRotos_(function (t) {
+      t.Gastos.push({
+        id: 'gasROTO1', fecha: '2026-07-22', descripcion: 'Fila tocada a mano',
+        categoria_id: 'zzz99999', medio_pago_id: '', monto: 1000, moneda: 'ARS',
+        compra_credito_id: '', nro_cuota: '', creado_en: '2026-07-22T10:00:00'
+      });
+    }, function () {
+      var g = porId_(resOk_(listarGastos({})).gastos, 'gasROTO1');
+      ok_(g, 'la fila rota igual tiene que listarse, no desaparecer');
+      ok_(g.categoria_label.indexOf('inexistente') >= 0, 'categoria: ' + g.categoria_label);
+      ok_(g.medio_label.indexOf('sin medio') >= 0, 'medio: ' + g.medio_label);
+    });
+  });
+
+  test_('listarGastos coerciona montos escritos como texto es-AR', function () {
+    conFixturesRotos_(function (t) {
+      t.Gastos[0].monto = '1.234,56';
+      t.Gastos[1].monto = 'no es un numero';
+    }, function () {
+      var gastos = resOk_(listarGastos({})).gastos;
+      eq_(porId_(gastos, 'gas00001').monto, 1234.56);
+      eq_(porId_(gastos, 'gas00002').monto, 0, 'basura cae a 0, nunca a NaN');
+    });
+  });
+
+  test_('listarCompras coerciona n_cuotas y monto_total escritos como texto', function () {
+    conFixturesRotos_(function (t) {
+      // Con coma decimal es inequívoco que el punto es separador de miles.
+      // "60.000" a secas es ambiguo y `numero_` lo lee 60: no se testea eso
+      // como si fuera correcto — se testea el formato es-AR completo.
+      t.ComprasCredito[0].monto_total = '60.000,00';
+      t.ComprasCredito[0].n_cuotas = '6';
+    }, function () {
+      var c = porId_(resOk_(listarCompras({})).compras, 'com00001');
+      eq_(c.monto_total, 60000);
+      eq_(c.n_cuotas, 6);
+      eq_(c.monto_cuota_teorico, 10000);
+    });
+  });
+
+  test_('diagnosticarDatos no reporta nada sobre datos sanos', function () {
+    conFixtures_(function () {
+      var d = resOk_(diagnosticarDatos());
+      eq_(d.problemas.length, 0, 'problemas: ' + JSON.stringify(d.problemas));
+      eq_(d.resumen.Gastos, 6);
+    });
+  });
+
+  test_('diagnosticarDatos encuentra id duplicado, FK huerfana, monto y moneda', function () {
+    conFixturesRotos_(function (t) {
+      t.Gastos.push(merge_(t.Gastos[0], { descripcion: 'Clon' }));            // id duplicado
+      t.Gastos.push({
+        id: 'gasROTO2', fecha: '32/13/2026', descripcion: 'Rota',
+        categoria_id: 'zzz99999', medio_pago_id: 'med00001', monto: 'ochomil',
+        moneda: 'EUR', compra_credito_id: 'compraQueNoExiste', nro_cuota: '', creado_en: ''
+      });
+    }, function () {
+      var probs = resOk_(diagnosticarDatos()).problemas;
+      var campos = probs.map(function (p) { return p.campo; });
+      ['id', 'fecha', 'categoria_id', 'monto', 'moneda', 'compra_credito_id'].forEach(function (c) {
+        ok_(campos.indexOf(c) >= 0, 'falto detectar el problema de ' + c + ' -> ' + JSON.stringify(campos));
+      });
+    });
+  });
+
+  test_('diagnosticarDatos detecta una compra con mas pagos que cuotas', function () {
+    conFixturesRotos_(function (t) {
+      t.ComprasCredito[0].n_cuotas = 1;   // tiene 2 pagos vinculados
+    }, function () {
+      var probs = resOk_(diagnosticarDatos()).problemas;
+      ok_(probs.some(function (p) {
+        return p.id === 'com00001' && p.detalle.indexOf('cuotas pagadas') >= 0;
+      }), 'deberia avisar que se paso de cuotas -> ' + JSON.stringify(probs));
     });
   });
 }
@@ -996,6 +1165,93 @@ function testsEndpoints_() {
     }));
     resErr_(borrarMedio(ids.efectivo), 'no se puede eliminar');
     resOk_(borrarMedio(nuevo), 'sin referencias sí se borra');
+  });
+}
+
+/* ====== Capa 2: robustez contra la sandbox (It 4f) ====== */
+
+function testsRobustezIntegracion_() {
+  test_('nuevoIdUnico_ nunca devuelve un id que ya existe en la tabla', function () {
+    truncarSandbox_();
+    // Se siembran ids reales y se pide uno nuevo muchas veces: ninguno puede
+    // chocar ni con la Sheet ni con los reservados del mismo batch.
+    var sembrados = [];
+    for (var i = 0; i < 20; i++) sembrados.push(nuevoId_());
+    insertarFilas_('Categorias', sembrados.map(function (id, k) {
+      return { id: id, tipo: 'Diario', categoria: 'C' + k, subcategoria: '', activo: true };
+    }));
+
+    var reservados = [];
+    for (var j = 0; j < 30; j++) {
+      var id = nuevoIdUnico_('Categorias', reservados);
+      ok_(sembrados.indexOf(id) < 0, 'choco con un id ya escrito: ' + id);
+      ok_(reservados.indexOf(id) < 0, 'choco con un id del mismo batch: ' + id);
+      ok_(/^[0-9a-f]{8}$/.test(id), 'formato de id inesperado: ' + id);
+      reservados.push(id);
+    }
+  });
+
+  test_('conLock_ libera el lock y deja escribir despues', function () {
+    truncarSandbox_();
+    var dentro = conLock_(function () {
+      insertarFilasSinLock_('MediosPago', [{ id: nuevoId_(), tipo_medio: 'Efectivo', entidad: 'Dentro', activo: true }]);
+      return leerTabla_('MediosPago').length;
+    });
+    eq_(dentro, 1, 'la lectura de adentro del lock ve lo que acaba de escribir');
+    // Si el lock hubiera quedado tomado, esta escritura tiraria por timeout.
+    insertarFilas_('MediosPago', [{ id: nuevoId_(), tipo_medio: 'Efectivo', entidad: 'Despues', activo: true }]);
+    eq_(leerTabla_('MediosPago').length, 2);
+  });
+
+  test_('confirmarResumen es atomico: si un item falla no entra ninguno', function () {
+    var ids = sembrarMaestros_();
+    var compraId = resOk_(crearCompra({
+      fecha_compra: '2026-07-01', descripcion: 'Heladera', medio_pago_id: ids.visa,
+      categoria_id: ids.catComida, monto_total: 60000, n_cuotas: 6, moneda: 'ARS'
+    })).id;
+
+    // El segundo item tiene la categoria inactiva: tiene que rebotar TODO.
+    resErr_(confirmarResumen({
+      fecha: '2026-08-10', medio_pago_id: ids.debito,
+      items: [
+        { compra_credito_id: compraId, categoria_id: ids.catComida, monto: 10000, moneda: 'ARS' },
+        { compra_credito_id: compraId, categoria_id: ids.catInactiva, monto: 10000, moneda: 'ARS' }
+      ]
+    }), 'categor\u00eda');
+    eq_(leerTabla_('Gastos').length, 0, 'no tiene que haber quedado ni el item valido');
+
+    // Y con todo bien, entran los dos de una.
+    eq_(resOk_(confirmarResumen({
+      fecha: '2026-08-10', medio_pago_id: ids.debito,
+      items: [
+        { compra_credito_id: compraId, categoria_id: ids.catComida, monto: 10000, moneda: 'ARS' },
+        { compra_credito_id: compraId, categoria_id: ids.catComida, monto: 11000, moneda: 'ARS' }
+      ]
+    })).insertados, 2);
+    var gastos = leerTabla_('Gastos');
+    eq_(gastos.length, 2);
+    ok_(String(gastos[0].id) !== String(gastos[1].id), 'los ids del batch tienen que ser distintos');
+  });
+
+  test_('el server rechaza un texto largo aunque el cliente lo deje pasar', function () {
+    var ids = sembrarMaestros_();
+    var largo = new Array(142).join('a');
+    resErr_(crearGasto({
+      fecha: '2026-08-01', descripcion: largo, categoria_id: ids.catComida,
+      medio_pago_id: ids.efectivo, monto: 100, moneda: 'ARS'
+    }), 'm\u00e1ximo 140');
+    eq_(leerTabla_('Gastos').length, 0, 'no se escribio nada');
+  });
+
+  test_('diagnosticarDatos corre contra una Sheet real y no reporta falsos positivos', function () {
+    var ids = sembrarMaestros_();
+    resOk_(crearGasto({
+      fecha: '2026-08-01', descripcion: 'Milanesa', categoria_id: ids.catComida,
+      medio_pago_id: ids.efectivo, monto: 5000, moneda: 'ARS'
+    }));
+    var d = resOk_(diagnosticarDatos());
+    eq_(d.problemas.length, 0, 'problemas: ' + JSON.stringify(d.problemas));
+    eq_(d.resumen.Gastos, 1);
   });
 }
 

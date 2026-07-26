@@ -66,6 +66,37 @@ function leerTabla_(nombre) {
 }
 
 /**
+ * Toma el lock de escritura o tira. Separado de las funciones de escritura
+ * para poder abarcar con UN solo lock una secuencia leer→validar→escribir
+ * (It 4f): tomar dos locks anidados en la misma ejecución se traba solo.
+ */
+function tomarLock_() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    throw new Error('No se pudo tomar el lock (otra escritura en curso). Probá de nuevo.');
+  }
+  return lock;
+}
+
+/**
+ * Corre `fn` con el lock tomado y el cache de lectura tirado, para que las
+ * lecturas de adentro vean el estado real del momento en que se ganó el lock.
+ * Lo usa `confirmarResumen`, que decide cuántas cuotas puede insertar a partir
+ * de lo que lee: si leyera afuera del lock, dos confirmaciones simultáneas
+ * podrían pasar la validación con el mismo estado y sobre-vincular cuotas.
+ * Adentro de `fn` hay que escribir con las variantes *SinLock_.
+ */
+function conLock_(fn) {
+  var lock = tomarLock_();
+  try {
+    invalidarTabla_();
+    return fn();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
  * Inserta filas al final de una pestaña, en batch y con lock. `objetos` es un
  * array de objetos {header: valor}; se ordenan según la fila de headers real de
  * la hoja (headers ausentes en el objeto quedan ''). Devuelve la cantidad
@@ -73,28 +104,34 @@ function leerTabla_(nombre) {
  */
 function insertarFilas_(nombre, objetos) {
   if (!objetos || !objetos.length) return 0;
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(10000)) {
-    throw new Error('No se pudo tomar el lock (otra escritura en curso). Probá de nuevo.');
-  }
+  var lock = tomarLock_();
   try {
-    var hoja = abrirSS_().getSheetByName(nombre);
-    if (!hoja) throw new Error('No existe la pestaña "' + nombre + '".');
-    var lc = hoja.getLastColumn();
-    var headers = hoja.getRange(1, 1, 1, lc).getValues()[0].map(function (h) { return String(h).trim(); });
-    var filas = objetos.map(function (o) {
-      return headers.map(function (h) {
-        return Object.prototype.hasOwnProperty.call(o, h) ? o[h] : '';
-      });
-    });
-    var start = hoja.getLastRow() + 1;
-    hoja.getRange(start, 1, filas.length, headers.length).setValues(filas);
-    SpreadsheetApp.flush();
-    invalidarTabla_(nombre);
-    return filas.length;
+    return insertarFilasSinLock_(nombre, objetos);
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * Cuerpo de `insertarFilas_` SIN tomar el lock. Solo para usar adentro de
+ * `conLock_`, que ya lo tiene.
+ */
+function insertarFilasSinLock_(nombre, objetos) {
+  if (!objetos || !objetos.length) return 0;
+  var hoja = abrirSS_().getSheetByName(nombre);
+  if (!hoja) throw new Error('No existe la pestaña "' + nombre + '".');
+  var lc = hoja.getLastColumn();
+  var headers = hoja.getRange(1, 1, 1, lc).getValues()[0].map(function (h) { return String(h).trim(); });
+  var filas = objetos.map(function (o) {
+    return headers.map(function (h) {
+      return Object.prototype.hasOwnProperty.call(o, h) ? o[h] : '';
+    });
+  });
+  var start = hoja.getLastRow() + 1;
+  hoja.getRange(start, 1, filas.length, headers.length).setValues(filas);
+  SpreadsheetApp.flush();
+  invalidarTabla_(nombre);
+  return filas.length;
 }
 
 /**
@@ -104,10 +141,7 @@ function insertarFilas_(nombre, objetos) {
  * encontró y actualizó, false si no existe ese id.
  */
 function actualizarFila_(nombre, id, cambios) {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(10000)) {
-    throw new Error('No se pudo tomar el lock (otra escritura en curso). Probá de nuevo.');
-  }
+  var lock = tomarLock_();
   try {
     var hoja = abrirSS_().getSheetByName(nombre);
     if (!hoja) throw new Error('No existe la pestaña "' + nombre + '".');
@@ -139,10 +173,7 @@ function actualizarFila_(nombre, id, cambios) {
  * `Gastos` (los maestros usan soft delete activo=FALSE, ver ABM en 1c).
  */
 function borrarFila_(nombre, id) {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(10000)) {
-    throw new Error('No se pudo tomar el lock (otra escritura en curso). Probá de nuevo.');
-  }
+  var lock = tomarLock_();
   try {
     var hoja = abrirSS_().getSheetByName(nombre);
     if (!hoja) throw new Error('No existe la pestaña "' + nombre + '".');
@@ -168,13 +199,46 @@ function borrarFila_(nombre, id) {
 
 /**
  * true si el valor de la columna `activo` cuenta como activo. La migración
- * escribe booleanos, pero una edición manual en la Sheet puede dejar el texto
- * "TRUE"/"VERDADERO": se contemplan ambos.
+ * escribe booleanos, pero una edición manual en la Sheet puede dejar texto o
+ * un 1: se contemplan las formas razonables (It 4f). Cualquier otra cosa
+ * (vacío, "FALSE", basura) cuenta como INACTIVO — el default seguro es ocultar
+ * un maestro dudoso, no ofrecerlo para cargar gastos nuevos.
  */
+var ACTIVO_TEXTOS_ = ['TRUE', 'VERDADERO', 'SI', 'SÍ', 'YES', '1', 'X'];
+
 function esActivo_(v) {
   if (v === true) return true;
-  var s = String(v).trim().toUpperCase();
-  return s === 'TRUE' || s === 'VERDADERO';
+  if (v === 1) return true;
+  return ACTIVO_TEXTOS_.indexOf(String(v).trim().toUpperCase()) >= 0;
+}
+
+/**
+ * Número defensivo para datos que vienen de la Sheet (It 4f). `numero_`
+ * (migracion.js) ya maneja el texto es-AR "1.234,56"; acá se garantiza además
+ * que el resultado sea finito, cayendo a `def` si la celda tiene basura. Se usa
+ * en los lectores para que una celda editada a mano no propague NaN a la app.
+ */
+function numeroSeguro_(v, def) {
+  var n = numero_(v);
+  return (typeof n === 'number' && isFinite(n)) ? n : (def || 0);
+}
+
+/**
+ * Id de 8 hex garantizado único dentro de `nombre` (It 4f, hallazgo #7).
+ * `nuevoId_` es aleatorio y no chequeaba nada: con miles de filas la
+ * probabilidad acumulada de colisión deja de ser despreciable, y una colisión
+ * rompe en silencio (dos gastos con el mismo id → editar/borrar toca el que no
+ * era). `extra` son ids ya reservados en este mismo batch, todavía no escritos.
+ */
+function nuevoIdUnico_(nombre, extra) {
+  var usados = {};
+  leerTabla_(nombre).forEach(function (r) { usados[String(r.id)] = true; });
+  (extra || []).forEach(function (id) { usados[String(id)] = true; });
+  for (var i = 0; i < 100; i++) {
+    var id = nuevoId_();
+    if (!usados[id]) return id;
+  }
+  throw new Error('No se pudo generar un id único para "' + nombre + '".');
 }
 
 /** Timestamp ISO local (America/Argentina/Tucuman) para creado_en. */

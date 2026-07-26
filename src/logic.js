@@ -5,6 +5,36 @@
  */
 
 /**
+ * Límites de longitud de los campos de texto (It 4f, hallazgo #8). Hasta acá la
+ * única barrera era el `maxlength` del cliente, que no protege nada: el server
+ * es alcanzable directo por google.script.run. Los números replican los del
+ * form para que no haya un texto que el cliente acepte y el server rechace.
+ */
+var LIMITES_TEXTO = {
+  descripcion: 140,
+  nota: 140,
+  tipo: 40,
+  categoria: 60,
+  subcategoria: 60,
+  tipo_medio: 40,
+  entidad: 80
+};
+
+/**
+ * Normaliza (trim) un texto y verifica su longitud contra LIMITES_TEXTO.
+ * Devuelve { ok:true, data } o { ok:false, error } con el nombre visible del
+ * campo, para que el mensaje sirva tal cual en la UI.
+ */
+function textoLimitado_(valor, campo, etiqueta) {
+  var s = String(valor == null ? '' : valor).trim();
+  var max = LIMITES_TEXTO[campo];
+  if (max && s.length > max) {
+    return { ok: false, error: (etiqueta || campo) + ': máximo ' + max + ' caracteres (tiene ' + s.length + ').' };
+  }
+  return { ok: true, data: s };
+}
+
+/**
  * Valida un alta/edición de Categoría. `idExcluir` es el id de la fila que se
  * está editando (para no chocar consigo misma en el chequeo de duplicado).
  * Duplicado = misma combinación Tipo + Categoría + Subcategoría (case-insensitive)
@@ -12,9 +42,13 @@
  */
 function validarCategoria_(payload, idExcluir) {
   payload = payload || {};
-  var tipo = String(payload.tipo || '').trim();
-  var categoria = String(payload.categoria || '').trim();
-  var subcategoria = String(payload.subcategoria || '').trim();
+  var vTipo = textoLimitado_(payload.tipo, 'tipo', 'Tipo');
+  if (!vTipo.ok) return vTipo;
+  var vCat = textoLimitado_(payload.categoria, 'categoria', 'Categoría');
+  if (!vCat.ok) return vCat;
+  var vSub = textoLimitado_(payload.subcategoria, 'subcategoria', 'Subcategoría');
+  if (!vSub.ok) return vSub;
+  var tipo = vTipo.data, categoria = vCat.data, subcategoria = vSub.data;
 
   if (!tipo) return { ok: false, error: 'El tipo es obligatorio.' };
   if (!categoria) return { ok: false, error: 'La categoría es obligatoria.' };
@@ -37,8 +71,11 @@ function validarCategoria_(payload, idExcluir) {
  */
 function validarMedio_(payload, idExcluir) {
   payload = payload || {};
-  var tipoMedio = String(payload.tipo_medio || '').trim();
-  var entidad = String(payload.entidad || '').trim();
+  var vTm = textoLimitado_(payload.tipo_medio, 'tipo_medio', 'Tipo de medio');
+  if (!vTm.ok) return vTm;
+  var vEnt = textoLimitado_(payload.entidad, 'entidad', 'Entidad');
+  if (!vEnt.ok) return vEnt;
+  var tipoMedio = vTm.data, entidad = vEnt.data;
 
   if (!tipoMedio) return { ok: false, error: 'El tipo de medio es obligatorio.' };
   if (!entidad) return { ok: false, error: 'La entidad es obligatoria.' };
@@ -67,6 +104,11 @@ function validarCompraPayload_(payload) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
     return { ok: false, error: 'Fecha de compra inválida (se espera yyyy-mm-dd).' };
   }
+
+  var vDesc = textoLimitado_(payload.descripcion, 'descripcion', 'Descripción');
+  if (!vDesc.ok) return vDesc;
+  var vNota = textoLimitado_(payload.nota, 'nota', 'Nota');
+  if (!vNota.ok) return vNota;
 
   var montoTotal = Number(payload.monto_total);
   if (!isFinite(montoTotal) || montoTotal <= 0) {
@@ -104,13 +146,13 @@ function validarCompraPayload_(payload) {
     ok: true,
     data: {
       fecha_compra: fecha,
-      descripcion: String(payload.descripcion || '').trim(),
+      descripcion: vDesc.data,
       medio_pago_id: medioId,
       categoria_id: categoriaId,
       monto_total: montoTotal,
       n_cuotas: nCuotas,
       moneda: moneda,
-      nota: String(payload.nota || '').trim()
+      nota: vNota.data
     }
   };
 }

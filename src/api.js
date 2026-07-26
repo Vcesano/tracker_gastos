@@ -9,6 +9,16 @@
 var MONEDAS_VALIDAS = ['ARS', 'USD'];
 
 /**
+ * Etiqueta para una FK que no resuelve (It 4f). La Sheet se puede editar a
+ * mano, y hasta acá una FK rota se mostraba como el id opaco de 8 hex, que
+ * parece un dato más. Con esto el problema se ve en la pantalla donde está.
+ */
+function etiquetaRota_(id, que) {
+  if (!String(id || '').trim()) return '(sin ' + que + ')';
+  return '(' + que + ' inexistente: ' + id + ')';
+}
+
+/**
  * Catálogos para los selects del form de gasto: categorías y medios de pago
  * ACTIVOS. Las categorías traen tipo/categoria/subcategoria para armar la
  * cascada en el cliente; el value final del select es el categoria_id (id).
@@ -65,6 +75,9 @@ function validarGastoPayload_(payload) {
     return { ok: false, error: 'Moneda inválida (ARS o USD).' };
   }
 
+  var vDesc = textoLimitado_(payload.descripcion, 'descripcion', 'Descripción');
+  if (!vDesc.ok) return vDesc;
+
   var categoriaId = String(payload.categoria_id || '').trim();
   if (!categoriaId) return { ok: false, error: 'Elegí una categoría.' };
 
@@ -90,7 +103,7 @@ function validarGastoPayload_(payload) {
     ok: true,
     data: {
       fecha: fecha,
-      descripcion: String(payload.descripcion || '').trim(),
+      descripcion: vDesc.data,
       categoria_id: categoriaId,
       medio_pago_id: medioId,
       monto: monto,
@@ -111,7 +124,7 @@ function crearGasto(payload) {
     if (!v.ok) return v;
 
     var gasto = {
-      id: nuevoId_(),
+      id: nuevoIdUnico_('Gastos'),
       fecha: v.data.fecha,
       descripcion: v.data.descripcion,
       categoria_id: v.data.categoria_id,
@@ -180,14 +193,16 @@ function listarGastos(filtros) {
       compraInfo[String(c.id)] = {
         medio: String(c.medio_pago_id || ''),
         descripcion: String(c.descripcion || ''),
-        n_cuotas: Number(c.n_cuotas) || 0
+        n_cuotas: numeroSeguro_(c.n_cuotas, 0)
       };
     });
 
     var gastos = leerTabla_('Gastos').map(function (g) {
       var cid = String(g.categoria_id || ''), mid = String(g.medio_pago_id || '');
-      var info = catInfo[cid] || { tipo: '', categoria: '', subcategoria: '', label: cid };
-      var nro = g.nro_cuota === '' || g.nro_cuota === null ? '' : (Number(g.nro_cuota) || '');
+      // FK rota (fila editada a mano en la Sheet): se muestra el problema en
+      // vez del id opaco, así se ve en el Historial y se puede arreglar (4f).
+      var info = catInfo[cid] || { tipo: '', categoria: '', subcategoria: '', label: etiquetaRota_(cid, 'categoría') };
+      var nro = g.nro_cuota === '' || g.nro_cuota === null ? '' : (numeroSeguro_(g.nro_cuota, 0) || '');
       var compraId = String(g.compra_credito_id || '').trim();
       var esCuota = compraId !== '';
       var cinfo = esCuota ? (compraInfo[compraId] || null) : null;
@@ -202,8 +217,8 @@ function listarGastos(filtros) {
         subcategoria: info.subcategoria,
         categoria_label: info.label,
         medio_pago_id: mid,
-        medio_label: medLabel[mid] || mid,
-        monto: Number(g.monto) || 0,
+        medio_label: medLabel[mid] || etiquetaRota_(mid, 'medio'),
+        monto: numeroSeguro_(g.monto, 0),
         moneda: String(g.moneda || ''),
         es_cuota: esCuota,
         nro_cuota: nro,
@@ -309,7 +324,7 @@ function crearCompra(payload) {
     if (!v.ok) return v;
 
     var compra = {
-      id: nuevoId_(),
+      id: nuevoIdUnico_('ComprasCredito'),
       fecha_compra: v.data.fecha_compra,
       descripcion: v.data.descripcion,
       medio_pago_id: v.data.medio_pago_id,
@@ -362,18 +377,18 @@ function listarCompras(filtros) {
       var p = pagosPorCompra[cid] || (pagosPorCompra[cid] = { count: 0, porMoneda: {} });
       p.count++;
       var mon = String(g.moneda || 'ARS');
-      p.porMoneda[mon] = (p.porMoneda[mon] || 0) + (Number(g.monto) || 0);
+      p.porMoneda[mon] = (p.porMoneda[mon] || 0) + numeroSeguro_(g.monto, 0);
     });
 
     var compras = leerTabla_('ComprasCredito').map(function (c) {
       var id = String(c.id);
-      var nCuotas = Number(c.n_cuotas) || 0;
-      var previas = Number(c.cuotas_previas) || 0;
+      var nCuotas = numeroSeguro_(c.n_cuotas, 0);
+      var previas = numeroSeguro_(c.cuotas_previas, 0);
       var pagos = pagosPorCompra[id] || { count: 0, porMoneda: {} };
       var pagadas = previas + pagos.count;
       var pendientes = Math.max(0, nCuotas - pagadas);
       var mid = String(c.medio_pago_id || '');
-      var montoTotal = Number(c.monto_total) || 0;
+      var montoTotal = numeroSeguro_(c.monto_total, 0);
       var pagado = Object.keys(pagos.porMoneda).map(function (mon) {
         return { moneda: mon, monto: pagos.porMoneda[mon] };
       });
@@ -382,7 +397,7 @@ function listarCompras(filtros) {
         fecha_compra: fechaISO_(c.fecha_compra),
         descripcion: String(c.descripcion || ''),
         medio_pago_id: mid,
-        tarjeta_label: medLabel[mid] || mid,
+        tarjeta_label: medLabel[mid] || etiquetaRota_(mid, 'tarjeta'),
         categoria_id: String(c.categoria_id || ''),
         categoria_label: catInfo[String(c.categoria_id || '')] || '',
         monto_total: montoTotal,
@@ -485,6 +500,12 @@ function borrarCompra(id) {
  * Si alguna cuota ya tiene un pago con la MISMA fecha y `forzar` es falso, no
  * inserta nada y devuelve { requiereConfirmacion:true, duplicados:[...] } para
  * que el cliente confirme antes de duplicar.
+ *
+ * It 4f: TODO el leer→validar→escribir corre adentro de un único lock
+ * (`conLock_`). Antes el estado de pagos se leía afuera y solo la escritura
+ * estaba protegida: dos confirmaciones simultáneas podían validar contra el
+ * mismo estado viejo y vincular más cuotas que las pendientes. Es la escritura
+ * más cara de deshacer de la app, así que se paga el lock un poco más largo.
  */
 function confirmarResumen(payload, forzar) {
   try {
@@ -493,102 +514,120 @@ function confirmarResumen(payload, forzar) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
       return { ok: false, error: 'Fecha de pago inválida (se espera yyyy-mm-dd).' };
     }
-
-    var medioId = String(payload.medio_pago_id || '').trim();
-    if (!medioId) return { ok: false, error: 'Elegí el medio con el que se paga el resumen.' };
-    var medio = leerTabla_('MediosPago').filter(function (m) { return String(m.id) === medioId; })[0];
-    if (!medio || !esActivo_(medio.activo)) {
-      return { ok: false, error: 'El medio de pago no existe o está inactivo.' };
+    if (!(payload.items || []).length) {
+      return { ok: false, error: 'No hay nada para cargar. Tildá al menos una cuota o agregá un gasto.' };
     }
-    if (String(medio.tipo_medio).trim() === 'Credito') {
-      return { ok: false, error: 'El resumen se paga con una cuenta (Efectivo o Débito), no con otra tarjeta de crédito.' };
-    }
-
-    var items = payload.items || [];
-    if (!items.length) return { ok: false, error: 'No hay nada para cargar. Tildá al menos una cuota o agregá un gasto.' };
-
-    var catActivas = {};
-    leerTabla_('Categorias').forEach(function (c) { if (esActivo_(c.activo)) catActivas[String(c.id)] = true; });
-
-    var comprasById = {};
-    leerTabla_('ComprasCredito').forEach(function (c) { comprasById[String(c.id)] = c; });
-
-    // Estado fresco de pagos: conteo por compra + set (compra|fecha) para dups.
-    var pagosCount = {}, pagosFecha = {};
-    leerTabla_('Gastos').forEach(function (g) {
-      var cid = String(g.compra_credito_id || '').trim();
-      if (!cid) return;
-      pagosCount[cid] = (pagosCount[cid] || 0) + 1;
-      pagosFecha[cid + '|' + fechaISO_(g.fecha)] = true;
-    });
-
-    var normal = [], seqPorCompra = {}, duplicados = [];
-    for (var i = 0; i < items.length; i++) {
-      var it = items[i] || {};
-      var monto = Number(it.monto);
-      if (!isFinite(monto) || monto <= 0) return { ok: false, error: 'Hay un monto inválido (debe ser mayor a 0).' };
-      var moneda = String(it.moneda || 'ARS').trim().toUpperCase();
-      if (MONEDAS_VALIDAS.indexOf(moneda) < 0) return { ok: false, error: 'Moneda inválida en un ítem (ARS o USD).' };
-      var catId = String(it.categoria_id || '').trim();
-      if (!catId || !catActivas[catId]) return { ok: false, error: 'Hay un ítem con categoría inválida o inactiva.' };
-      var desc = String(it.descripcion || '').trim();
-      var compraId = String(it.compra_credito_id || '').trim();
-      var nroCuota = '';
-
-      if (compraId) {
-        var compra = comprasById[compraId];
-        if (!compra) return { ok: false, error: 'Una cuota referencia una compra inexistente.' };
-        var nCuotas = Number(compra.n_cuotas) || 0;
-        var pagadas = (Number(compra.cuotas_previas) || 0) + (pagosCount[compraId] || 0);
-        var seq = (seqPorCompra[compraId] || 0) + 1;
-        seqPorCompra[compraId] = seq;
-        var pendientes = nCuotas - pagadas;
-        if (seq > pendientes) {
-          return { ok: false, error: 'La compra "' + (compra.descripcion || compraId) + '" no tiene tantas cuotas pendientes (quedan ' + Math.max(0, pendientes) + ').' };
-        }
-        nroCuota = pagadas + seq;
-        if (pagosFecha[compraId + '|' + fecha]) duplicados.push(compra.descripcion || compraId);
-
-        // Descripción por default de la cuota: "Cuota N/M - <compra>". El pago
-        // conserva su categoría real; esto solo lo hace identificable en el
-        // Historial. Editable: si el cliente mandó texto, se respeta.
-        if (!desc) {
-          var base = String(compra.descripcion || '').trim();
-          desc = 'Cuota ' + nroCuota + '/' + nCuotas + (base ? ' - ' + base : '');
-        }
-      }
-
-      normal.push({
-        compra_credito_id: compraId, categoria_id: catId, monto: monto,
-        moneda: moneda, descripcion: desc, nro_cuota: nroCuota
-      });
-    }
-
-    if (!forzar && duplicados.length) {
-      return { ok: true, data: { requiereConfirmacion: true, duplicados: duplicados } };
-    }
-
-    var creado = ahoraISO_();
-    var filas = normal.map(function (n) {
-      return {
-        id: nuevoId_(),
-        fecha: fecha,
-        descripcion: n.descripcion,
-        categoria_id: n.categoria_id,
-        medio_pago_id: medioId,
-        monto: n.monto,
-        moneda: n.moneda,
-        compra_credito_id: n.compra_credito_id,
-        nro_cuota: n.nro_cuota,
-        creado_en: creado
-      };
-    });
-
-    insertarFilas_('Gastos', filas);
-    return { ok: true, data: { insertados: filas.length } };
+    return conLock_(function () { return confirmarResumenEnLock_(payload, fecha, forzar); });
   } catch (e) {
     return { ok: false, error: e.message };
   }
+}
+
+/**
+ * Cuerpo de `confirmarResumen`, ya adentro del lock y con el cache de lectura
+ * tirado (todas las `leerTabla_` de acá ven el estado del momento en que se
+ * ganó el lock). No tomar locks nuevos acá adentro: escribir con *SinLock_.
+ */
+function confirmarResumenEnLock_(payload, fecha, forzar) {
+  var medioId = String(payload.medio_pago_id || '').trim();
+  if (!medioId) return { ok: false, error: 'Elegí el medio con el que se paga el resumen.' };
+  var medio = leerTabla_('MediosPago').filter(function (m) { return String(m.id) === medioId; })[0];
+  if (!medio || !esActivo_(medio.activo)) {
+    return { ok: false, error: 'El medio de pago no existe o está inactivo.' };
+  }
+  if (String(medio.tipo_medio).trim() === 'Credito') {
+    return { ok: false, error: 'El resumen se paga con una cuenta (Efectivo o Débito), no con otra tarjeta de crédito.' };
+  }
+
+  var items = payload.items || [];
+
+  var catActivas = {};
+  leerTabla_('Categorias').forEach(function (c) { if (esActivo_(c.activo)) catActivas[String(c.id)] = true; });
+
+  var comprasById = {};
+  leerTabla_('ComprasCredito').forEach(function (c) { comprasById[String(c.id)] = c; });
+
+  // Estado fresco de pagos: conteo por compra + set (compra|fecha) para dups.
+  var pagosCount = {}, pagosFecha = {};
+  leerTabla_('Gastos').forEach(function (g) {
+    var cid = String(g.compra_credito_id || '').trim();
+    if (!cid) return;
+    pagosCount[cid] = (pagosCount[cid] || 0) + 1;
+    pagosFecha[cid + '|' + fechaISO_(g.fecha)] = true;
+  });
+
+  var normal = [], seqPorCompra = {}, duplicados = [];
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i] || {};
+    var monto = Number(it.monto);
+    if (!isFinite(monto) || monto <= 0) return { ok: false, error: 'Hay un monto inválido (debe ser mayor a 0).' };
+    var moneda = String(it.moneda || 'ARS').trim().toUpperCase();
+    if (MONEDAS_VALIDAS.indexOf(moneda) < 0) return { ok: false, error: 'Moneda inválida en un ítem (ARS o USD).' };
+    var catId = String(it.categoria_id || '').trim();
+    if (!catId || !catActivas[catId]) return { ok: false, error: 'Hay un ítem con categoría inválida o inactiva.' };
+    var vDesc = textoLimitado_(it.descripcion, 'descripcion', 'Descripción de un ítem');
+    if (!vDesc.ok) return vDesc;
+    var desc = vDesc.data;
+    var compraId = String(it.compra_credito_id || '').trim();
+    var nroCuota = '';
+
+    if (compraId) {
+      var compra = comprasById[compraId];
+      if (!compra) return { ok: false, error: 'Una cuota referencia una compra inexistente.' };
+      var nCuotas = numeroSeguro_(compra.n_cuotas, 0);
+      var pagadas = numeroSeguro_(compra.cuotas_previas, 0) + (pagosCount[compraId] || 0);
+      var seq = (seqPorCompra[compraId] || 0) + 1;
+      seqPorCompra[compraId] = seq;
+      var pendientes = nCuotas - pagadas;
+      if (seq > pendientes) {
+        return { ok: false, error: 'La compra "' + (compra.descripcion || compraId) + '" no tiene tantas cuotas pendientes (quedan ' + Math.max(0, pendientes) + ').' };
+      }
+      nroCuota = pagadas + seq;
+      if (pagosFecha[compraId + '|' + fecha]) duplicados.push(compra.descripcion || compraId);
+
+      // Descripción por default de la cuota: "Cuota N/M - <compra>". El pago
+      // conserva su categoría real; esto solo lo hace identificable en el
+      // Historial. Editable: si el cliente mandó texto, se respeta.
+      if (!desc) {
+        var base = String(compra.descripcion || '').trim();
+        desc = 'Cuota ' + nroCuota + '/' + nCuotas + (base ? ' - ' + base : '');
+      }
+    }
+
+    normal.push({
+      compra_credito_id: compraId, categoria_id: catId, monto: monto,
+      moneda: moneda, descripcion: desc, nro_cuota: nroCuota
+    });
+  }
+
+  if (!forzar && duplicados.length) {
+    return { ok: true, data: { requiereConfirmacion: true, duplicados: duplicados } };
+  }
+
+  // Ids únicos: `reservados` evita además que dos filas del MISMO batch
+  // salgan con el mismo id (todavía no están escritas, así que la Sheet no
+  // las conoce).
+  var creado = ahoraISO_();
+  var reservados = [];
+  var filas = normal.map(function (n) {
+    var id = nuevoIdUnico_('Gastos', reservados);
+    reservados.push(id);
+    return {
+      id: id,
+      fecha: fecha,
+      descripcion: n.descripcion,
+      categoria_id: n.categoria_id,
+      medio_pago_id: medioId,
+      monto: n.monto,
+      moneda: n.moneda,
+      compra_credito_id: n.compra_credito_id,
+      nro_cuota: n.nro_cuota,
+      creado_en: creado
+    };
+  });
+
+  insertarFilasSinLock_('Gastos', filas);
+  return { ok: true, data: { insertados: filas.length } };
 }
 
 /* ===================== ABM de maestros (slice 1c) ===================== */
@@ -621,7 +660,7 @@ function crearCategoria(payload) {
   try {
     var v = validarCategoria_(payload, null);
     if (!v.ok) return v;
-    var row = { id: nuevoId_(), tipo: v.data.tipo, categoria: v.data.categoria, subcategoria: v.data.subcategoria, activo: true };
+    var row = { id: nuevoIdUnico_('Categorias'), tipo: v.data.tipo, categoria: v.data.categoria, subcategoria: v.data.subcategoria, activo: true };
     insertarFilas_('Categorias', [row]);
     return { ok: true, data: { id: row.id } };
   } catch (e) {
@@ -681,7 +720,7 @@ function crearMedio(payload) {
   try {
     var v = validarMedio_(payload, null);
     if (!v.ok) return v;
-    var row = { id: nuevoId_(), tipo_medio: v.data.tipo_medio, entidad: v.data.entidad, activo: true };
+    var row = { id: nuevoIdUnico_('MediosPago'), tipo_medio: v.data.tipo_medio, entidad: v.data.entidad, activo: true };
     insertarFilas_('MediosPago', [row]);
     return { ok: true, data: { id: row.id } };
   } catch (e) {
@@ -734,4 +773,125 @@ function setActivoMedio(id, activo) {
   } catch (e) {
     return { ok: false, error: e.message };
   }
+}
+
+/* ===================== Diagnóstico de datos (It 4f) ===================== */
+
+/**
+ * Auditoría READ-ONLY de las 4 pestañas operacionales. No escribe nada: solo
+ * reporta lo que una edición manual de la Sheet pudo haber roto y que la app
+ * no puede arreglar sola (la app es el único escritor "sano", pero la Sheet
+ * está a un clic de distancia y Valentin la abre para mirar).
+ *
+ * Chequea: ids vacíos o duplicados, FKs huérfanas, fechas fuera de formato,
+ * montos no numéricos, monedas fuera de ARS/USD, n_cuotas inválidos y compras
+ * con más pagos vinculados que cuotas.
+ *
+ * Devuelve { problemas:[{tabla, id, campo, detalle}], resumen:{...} }. Sin
+ * problemas → lista vacía. Se corre desde el editor de Apps Script o desde
+ * `correrTests()`; no está cableada a ninguna pantalla.
+ */
+function diagnosticarDatos() {
+  try {
+    var problemas = [];
+    var add = function (tabla, id, campo, detalle) {
+      problemas.push({ tabla: tabla, id: String(id || ''), campo: campo, detalle: detalle });
+    };
+
+    var cats = leerTabla_('Categorias');
+    var medios = leerTabla_('MediosPago');
+    var compras = leerTabla_('ComprasCredito');
+    var gastos = leerTabla_('Gastos');
+
+    // ids vacíos / duplicados en las 4 tablas.
+    var setIds = {};
+    [['Categorias', cats], ['MediosPago', medios], ['ComprasCredito', compras], ['Gastos', gastos]]
+      .forEach(function (par) {
+        var tabla = par[0], filas = par[1], vistos = {};
+        setIds[tabla] = vistos;
+        filas.forEach(function (r) {
+          var id = String(r.id || '').trim();
+          if (!id) { add(tabla, '', 'id', 'Fila sin id.'); return; }
+          if (vistos[id]) add(tabla, id, 'id', 'Id duplicado.');
+          vistos[id] = true;
+        });
+      });
+
+    var esFecha = function (v) { return /^\d{4}-\d{2}-\d{2}$/.test(fechaISO_(v)); };
+    var esMoneda = function (v) { return MONEDAS_VALIDAS.indexOf(String(v || '').trim().toUpperCase()) >= 0; };
+    var esNum = function (v) { var n = numero_(v); return typeof n === 'number' && isFinite(n); };
+
+    medios.forEach(function (m) {
+      if (!String(m.entidad || '').trim()) add('MediosPago', m.id, 'entidad', 'Entidad vacía (es la etiqueta visible).');
+      if (!String(m.tipo_medio || '').trim()) add('MediosPago', m.id, 'tipo_medio', 'Tipo de medio vacío.');
+    });
+
+    cats.forEach(function (c) {
+      if (!String(c.tipo || '').trim()) add('Categorias', c.id, 'tipo', 'Tipo vacío.');
+      if (!String(c.categoria || '').trim()) add('Categorias', c.id, 'categoria', 'Categoría vacía.');
+    });
+
+    compras.forEach(function (c) {
+      var id = c.id;
+      if (!esFecha(c.fecha_compra)) add('ComprasCredito', id, 'fecha_compra', 'Fecha inválida: "' + c.fecha_compra + '".');
+      if (!esNum(c.monto_total) || numeroSeguro_(c.monto_total, 0) <= 0) add('ComprasCredito', id, 'monto_total', 'Monto total no numérico o <= 0: "' + c.monto_total + '".');
+      var n = numeroSeguro_(c.n_cuotas, 0);
+      if (n < 1 || Math.floor(n) !== n) add('ComprasCredito', id, 'n_cuotas', 'Cantidad de cuotas inválida: "' + c.n_cuotas + '".');
+      if (!esMoneda(c.moneda)) add('ComprasCredito', id, 'moneda', 'Moneda fuera de ARS/USD: "' + c.moneda + '".');
+      if (!setIds.MediosPago[String(c.medio_pago_id || '').trim()]) add('ComprasCredito', id, 'medio_pago_id', 'Tarjeta inexistente: "' + c.medio_pago_id + '".');
+      if (!setIds.Categorias[String(c.categoria_id || '').trim()]) add('ComprasCredito', id, 'categoria_id', 'Categoría inexistente: "' + c.categoria_id + '".');
+    });
+
+    var pagosPorCompra = {};
+    gastos.forEach(function (g) {
+      var id = g.id;
+      if (!esFecha(g.fecha)) add('Gastos', id, 'fecha', 'Fecha inválida: "' + g.fecha + '".');
+      if (!esNum(g.monto) || numeroSeguro_(g.monto, 0) <= 0) add('Gastos', id, 'monto', 'Monto no numérico o <= 0: "' + g.monto + '".');
+      if (!esMoneda(g.moneda)) add('Gastos', id, 'moneda', 'Moneda fuera de ARS/USD: "' + g.moneda + '".');
+      if (!setIds.Categorias[String(g.categoria_id || '').trim()]) add('Gastos', id, 'categoria_id', 'Categoría inexistente: "' + g.categoria_id + '".');
+      if (!setIds.MediosPago[String(g.medio_pago_id || '').trim()]) add('Gastos', id, 'medio_pago_id', 'Medio de pago inexistente: "' + g.medio_pago_id + '".');
+      var cid = String(g.compra_credito_id || '').trim();
+      if (cid) {
+        if (!setIds.ComprasCredito[cid]) add('Gastos', id, 'compra_credito_id', 'Compra inexistente: "' + cid + '".');
+        else pagosPorCompra[cid] = (pagosPorCompra[cid] || 0) + 1;
+      }
+    });
+
+    // Más pagos vinculados que cuotas: rompe el estado derivado de la compra.
+    compras.forEach(function (c) {
+      var id = String(c.id || '').trim();
+      var pagadas = numeroSeguro_(c.cuotas_previas, 0) + (pagosPorCompra[id] || 0);
+      var n = numeroSeguro_(c.n_cuotas, 0);
+      if (n && pagadas > n) {
+        add('ComprasCredito', id, 'n_cuotas', 'Tiene ' + pagadas + ' cuotas pagadas sobre ' + n + ' totales.');
+      }
+    });
+
+    var resumen = {
+      Categorias: cats.length, MediosPago: medios.length,
+      ComprasCredito: compras.length, Gastos: gastos.length,
+      problemas: problemas.length
+    };
+    return { ok: true, data: { problemas: problemas, resumen: resumen } };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Corre `diagnosticarDatos()` y lo imprime legible en el Logger. Pensado para
+ * ejecutar a mano desde el editor de Apps Script sobre la copia de trabajo
+ * (es read-only: no toca un solo dato).
+ */
+function reporteDiagnostico() {
+  var res = diagnosticarDatos();
+  if (!res.ok) { Logger.log('✗ ' + res.error); return; }
+  var d = res.data;
+  Logger.log('Filas → Categorias %s | MediosPago %s | ComprasCredito %s | Gastos %s',
+    d.resumen.Categorias, d.resumen.MediosPago, d.resumen.ComprasCredito, d.resumen.Gastos);
+  if (!d.problemas.length) { Logger.log('✓ Sin problemas de integridad.'); return; }
+  Logger.log('✗ %s problema(s):', d.problemas.length);
+  d.problemas.forEach(function (p) {
+    Logger.log('  [%s] id=%s %s → %s', p.tabla, p.id, p.campo, p.detalle);
+  });
 }
